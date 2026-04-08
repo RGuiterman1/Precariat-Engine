@@ -927,6 +927,8 @@ function ProjView({ projects, save, profile }) {
   const [viewAn, setViewAn] = useState(null);
   const [busy, setBusy] = useState(false);
   const [uploadErr, setUploadErr] = useState("");
+  const [analyzeErr, setAnalyzeErr] = useState("");
+  const [analyzingIdx, setAnalyzingIdx] = useState(null);
 
   const emptyForm = {
     title: "",
@@ -1027,6 +1029,8 @@ function ProjView({ projects, save, profile }) {
 
   const analyze = async (idx) => {
     setBusy(true);
+    setAnalyzeErr("");
+    setAnalyzingIdx(idx);
     try {
       const p = projects[idx];
       const projectFiles = await loadProjectFiles(p.id);
@@ -1128,11 +1132,18 @@ Be brutally specific to THIS project only. No generic advice.`;
           }
         };
         save(updated);
+        setViewAn(idx);
+      } else {
+        setAnalyzeErr("Got a response but couldn't parse it as JSON. Try again, or check the browser console for the raw response.");
+        console.error("Raw AI response:", txt);
       }
     } catch (e) {
-      console.error(e);
+      console.error("Analyze error:", e);
+      setAnalyzeErr(e.message || "Analysis failed. Check the browser console for details.");
+    } finally {
+      setBusy(false);
+      setAnalyzingIdx(null);
     }
-    setBusy(false);
   };
 
   /* ── VIEW ANALYSIS ── */
@@ -1530,6 +1541,24 @@ Be brutally specific to THIS project only. No generic advice.`;
         <Btn onClick={() => openEdit("new")}>+ New Project</Btn>
       </div>
 
+      {busy && (
+        <Card style={{ marginBottom: "16px", borderColor: C.tl + "50" }}>
+          <Loader text="Running deep analysis... this can take 30-90 seconds with attached files" />
+        </Card>
+      )}
+
+      {analyzeErr && (
+        <Card style={{ marginBottom: "16px", borderColor: C.dn + "50", background: C.dn + "08" }}>
+          <p style={{ fontSize: "13px", color: C.dn, marginBottom: "8px", fontWeight: 600 }}>
+            ⚠ Analysis failed
+          </p>
+          <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.6, marginBottom: "10px" }}>
+            {analyzeErr}
+          </p>
+          <Btn variant="ghost" small onClick={() => setAnalyzeErr("")}>Dismiss</Btn>
+        </Card>
+      )}
+
       {!projects.length ? (
         <Blank
           icon="◉"
@@ -1606,7 +1635,7 @@ Be brutally specific to THIS project only. No generic advice.`;
                       small
                       onClick={() => analyze(i)}
                       disabled={busy}
-                    >🔬 Analyze</Btn>
+                    >{analyzingIdx === i ? "⏳ Analyzing..." : "🔬 Analyze"}</Btn>
                   )}
                 </div>
               </div>
