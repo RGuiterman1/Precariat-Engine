@@ -343,6 +343,10 @@ function InfoBlock({ label, content, color }) {
    ═══════════════════════════════════════════════════ */
 
 async function askClaude(content, search) {
+  const apiKey = localStorage.getItem("poe_api_key") || "";
+  if (!apiKey) {
+    throw new Error("No API key set. Go to the Profile tab and add your Anthropic API key.");
+  }
   const messages = [{
     role: "user",
     content: typeof content === "string" ? content : content
@@ -355,16 +359,20 @@ async function askClaude(content, search) {
   if (search) {
     body.tools = [{ type: "web_search_20250305", name: "web_search" }];
   }
-  // Routes through serverless proxy at /api/claude
-  // The proxy adds the API key from server env vars (never exposed to browser)
-  const res = await fetch("/api/claude", {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
     body: JSON.stringify(body)
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "API request failed: " + res.status);
+    const msg = err.error?.message || err.error || ("API request failed: " + res.status);
+    throw new Error(msg);
   }
   const data = await res.json();
   return (data.content || [])
