@@ -422,7 +422,7 @@ function extractJSON(text) {
     return JSON.parse(clean);
   } catch (e) {}
 
-  // Find outermost {...} or [...] via proper brace matching (handles nesting + strings)
+  // Find outermost balanced bracket via proper matching (handles nesting + strings)
   const findOutermost = (str, openChar, closeChar) => {
     let start = -1;
     let depth = 0;
@@ -448,31 +448,54 @@ function extractJSON(text) {
     return null;
   };
 
-  // Try object extraction
-  const objCandidate = findOutermost(clean, "{", "}");
-  if (objCandidate) {
-    try {
-      return JSON.parse(objCandidate);
-    } catch (e) {
-      // Repair: strip trailing commas
-      const repaired = objCandidate.replace(/,(\s*[}\]])/g, "$1");
-      try {
-        return JSON.parse(repaired);
-      } catch (e2) {}
+  // Find first bracket of either type OUTSIDE strings — that tells us
+  // whether the root container is an object or an array.
+  const findFirstBracket = (str) => {
+    let inString = false;
+    let escape = false;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+      if (escape) { escape = false; continue; }
+      if (ch === "\\") { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === "{" || ch === "[") return ch;
     }
-  }
+    return null;
+  };
 
-  // Try array extraction
-  const arrCandidate = findOutermost(clean, "[", "]");
-  if (arrCandidate) {
+  const firstBracket = findFirstBracket(clean);
+  const tryParseWithRepair = (candidate) => {
+    if (!candidate) return undefined;
     try {
-      return JSON.parse(arrCandidate);
+      return JSON.parse(candidate);
     } catch (e) {
-      const repaired = arrCandidate.replace(/,(\s*[}\]])/g, "$1");
+      // Strip trailing commas, a common AI mistake
+      const repaired = candidate.replace(/,(\s*[}\]])/g, "$1");
       try {
         return JSON.parse(repaired);
       } catch (e2) {}
     }
+    return undefined;
+  };
+
+  // Try the root container type first
+  if (firstBracket === "[") {
+    const arrCandidate = findOutermost(clean, "[", "]");
+    const parsed = tryParseWithRepair(arrCandidate);
+    if (parsed !== undefined) return parsed;
+    // Fall back to object
+    const objCandidate = findOutermost(clean, "{", "}");
+    const parsedObj = tryParseWithRepair(objCandidate);
+    if (parsedObj !== undefined) return parsedObj;
+  } else {
+    const objCandidate = findOutermost(clean, "{", "}");
+    const parsed = tryParseWithRepair(objCandidate);
+    if (parsed !== undefined) return parsed;
+    // Fall back to array
+    const arrCandidate = findOutermost(clean, "[", "]");
+    const parsedArr = tryParseWithRepair(arrCandidate);
+    if (parsedArr !== undefined) return parsedArr;
   }
 
   console.error("extractJSON failed. Text preview:", clean.slice(0, 500));
