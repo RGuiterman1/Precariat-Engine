@@ -3920,6 +3920,29 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
   const [humanizingKey, setHumanizingKey] = useState(null);
   const [listFilter, setListFilter] = useState("all");
 
+  // Reset opportunity selection when project changes (available list shifts)
+  useEffect(() => {
+    setSelO(null);
+  }, [selP]);
+
+  // Also reset if the currently selected opp has been applied to (e.g., generation just finished)
+  useEffect(() => {
+    if (selO === null) return;
+    const currentProj = projects[selP];
+    if (!currentProj) return;
+    const opp = opps[selO];
+    if (!opp) {
+      setSelO(null);
+      return;
+    }
+    const key = (opp.name || "").toLowerCase().trim() + "|" + (opp.organization || "").toLowerCase().trim();
+    const alreadyApplied = apps.some(ap =>
+      ap.projTitle === currentProj.title &&
+      (ap.oppName || "").toLowerCase().trim() + "|" + (ap.oppOrg || "").toLowerCase().trim() === key
+    );
+    if (alreadyApplied) setSelO(null);
+  }, [apps, selO, selP, projects, opps]);
+
   // Derive busy + errors from global jobs
   const generateJobs = jobs.filter(j => j.kind === "generate");
   const refreshJobs = jobs.filter(j => j.kind === "refresh");
@@ -5182,17 +5205,61 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
         }}>
           <div>
             <label style={LS}>Opportunity</label>
-            <select
-              value={selO !== null ? selO : ""}
-              onChange={e => setSelO(e.target.value === "" ? null : parseInt(e.target.value))}
-            >
-              <option value="">Select...</option>
-              {opps.map((o, i) => (
-                <option key={i} value={i}>
-                  {o.name} — {o.submissionFee || "?"}
-                </option>
-              ))}
-            </select>
+            {(() => {
+              const currentProj = projects[selP];
+              // Build set of "opp-name|opp-org" already applied to with this project
+              const appliedKeys = new Set(
+                currentProj
+                  ? apps
+                      .filter(ap => ap.projTitle === currentProj.title)
+                      .map(ap => (ap.oppName || "").toLowerCase().trim() + "|" + (ap.oppOrg || "").toLowerCase().trim())
+                  : []
+              );
+              // Track original index so selected value still maps to the right opp in the full `opps` array
+              const available = opps
+                .map((o, i) => ({ o, i }))
+                .filter(({ o }) => {
+                  if (!currentProj) return true;
+                  const key = (o.name || "").toLowerCase().trim() + "|" + (o.organization || "").toLowerCase().trim();
+                  return !appliedKeys.has(key);
+                });
+              const hiddenCount = opps.length - available.length;
+              return (
+                <>
+                  <select
+                    value={selO !== null ? selO : ""}
+                    onChange={e => setSelO(e.target.value === "" ? null : parseInt(e.target.value))}
+                  >
+                    <option value="">Select...</option>
+                    {available.map(({ o, i }) => (
+                      <option key={i} value={i}>
+                        {o.name} — {o.submissionFee || "?"}
+                      </option>
+                    ))}
+                  </select>
+                  {hiddenCount > 0 && (
+                    <p style={{
+                      fontSize: "11px",
+                      color: C.tm,
+                      marginTop: "4px",
+                      fontFamily: FN.m
+                    }}>
+                      {hiddenCount} opportunit{hiddenCount === 1 ? "y" : "ies"} hidden (already applied to with {currentProj.title})
+                    </p>
+                  )}
+                  {available.length === 0 && opps.length > 0 && (
+                    <p style={{
+                      fontSize: "11px",
+                      color: C.wn,
+                      marginTop: "4px",
+                      fontFamily: FN.m
+                    }}>
+                      ⚠ You've already applied to every saved opportunity with this project. Discover new ones in the Discover tab, or switch to a different project.
+                    </p>
+                  )}
+                </>
+              );
+            })()}
           </div>
           <div>
             <label style={LS}>Project</label>
