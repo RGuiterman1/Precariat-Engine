@@ -1399,7 +1399,7 @@ Be brutally specific to THIS project only. No generic advice.`;
             marginBottom: "16px",
             lineHeight: 1.6
           }}>
-            Upload supporting materials. The AI will analyze these directly when generating your project intelligence report and applications. Max 4MB per file.
+            Upload supporting materials. The AI will analyze these directly when generating your project intelligence report and applications. Max 4MB per file. <strong style={{ color: C.wn }}>PDFs limited to 100 pages</strong> — for longer screenplays, upload as .txt instead.
           </p>
 
           {FILE_CATEGORIES.map(cat => {
@@ -1682,6 +1682,17 @@ function DiscView({ profile, projects, opps, save }) {
       ? "grants, festivals, labs, fellowships, and residencies"
       : filter.toLowerCase();
 
+    // Stage-specific eligibility rules
+    const stageRules = {
+      "Development": "Only return opportunities that accept projects IN DEVELOPMENT (screenplay stage, not yet in production). This includes: screenwriting grants, script development funds, writers labs, development fellowships, story/screenplay competitions, early-stage incubators, and development residencies. DO NOT return film festivals (which require finished films), completed-film awards, distribution grants, post-production funds, or anything requiring an existing cut or finished work.",
+      "Pre-Production": "Only return opportunities that accept projects in PRE-PRODUCTION (script is locked, preparing to shoot). This includes: production financing grants, pre-production labs, production fellowships, producer labs, and packaging/financing programs. DO NOT return completed-film festivals, post-production funds, or development-only grants.",
+      "Production": "Only return opportunities that accept projects currently IN PRODUCTION (actively shooting). This includes: production grants, in-progress financing, and labs accepting projects mid-production. DO NOT return completed-film festivals, development-only grants, or post-production funds.",
+      "Post-Production": "Only return opportunities that accept projects in POST-PRODUCTION (shot but not finished). This includes: finishing funds, post-production grants, work-in-progress showcases, rough-cut labs, and WIP festivals. DO NOT return completed-film festivals requiring a locked final cut (unless they have a WIP section), development grants, or production-only funds.",
+      "Completed": "Only return opportunities for FINISHED films. This includes: film festivals (premiere and subsequent), distribution grants, completed-film awards, and release support programs. DO NOT return development grants, production funds, or opportunities requiring in-progress work."
+    };
+
+    const stageRule = stageRules[p.stage] || "Match opportunities appropriate to the project's current stage.";
+
     let analysisContext = "";
     if (a) {
       analysisContext = "\nPROJECT INTELLIGENCE:\n"
@@ -1694,19 +1705,31 @@ function DiscView({ profile, projects, opps, save }) {
     const prompt = `You are an expert film industry researcher. Search for REAL, currently open or upcoming ${tf} for this project.
 
 COMPANY: ${profile.companyName} | ${profile.bio} | ${profile.location}
-PROJECT: "${p.title}" | ${p.format} | ${p.genre || "?"} | ${p.stage} | ${p.logline || "?"} | ${p.themes || "?"}${analysisContext}
-${query.trim() ? "\nFocus: " + query : ""}
+PROJECT: "${p.title}"
+Format: ${p.format}
+Genre: ${p.genre || "?"}
+Stage: ${p.stage}
+Logline: ${p.logline || "?"}
+Themes: ${p.themes || "?"}${analysisContext}
+${query.trim() ? "\nAdditional focus: " + query : ""}
+
+🚨 CRITICAL STAGE REQUIREMENT (NON-NEGOTIABLE):
+This project is currently in "${p.stage}" stage. ${stageRule}
+
+Before returning ANY opportunity, verify it explicitly accepts projects in "${p.stage}" stage. If an opportunity requires a different stage, EXCLUDE IT. It is better to return fewer results than to include mismatched opportunities.
 
 Respond ONLY with a JSON array. Each object must have:
-- "name", "organization", "type" ("Grant"|"Festival"|"Lab"|"Fellowship"|"Residency")
+- "name", "organization"
+- "type" ("Grant"|"Festival"|"Lab"|"Fellowship"|"Residency")
 - "deadline" (specific date like "June 15, 2026" when available)
 - "amount", "submissionFee", "url"
 - "description" (2-3 sentences)
-- "matchReason" (why this fits THIS project)
+- "stageEligibility" (explicit quote or paraphrase from the opportunity confirming it accepts ${p.stage}-stage projects)
+- "matchReason" (why this fits THIS specific project — reference the analysis if provided)
 - "matchStrength" ("strong"|"moderate"|"speculative")
-- "eligibility"
+- "eligibility" (other key requirements beyond stage)
 
-Find 8-12 real opportunities. Prioritize strong matches.`;
+Find 6-12 real opportunities that STRICTLY match the project's current stage. Quality over quantity. Every single result must be appropriate for a project in "${p.stage}" stage.`;
 
     try {
       const txt = await askClaude(prompt, true);
@@ -1762,6 +1785,18 @@ Find 8-12 real opportunities. Prioritize strong matches.`;
         }}>
           <p style={{ fontSize: "13px", color: C.tl }}>
             💡 <strong>{selectedProj.title}</strong> isn't analyzed yet. Run analysis for dramatically better-matched results.
+          </p>
+        </Card>
+      )}
+
+      {selectedProj && (
+        <Card style={{
+          marginBottom: "16px",
+          borderColor: C.pp + "30",
+          background: C.pp + "06"
+        }}>
+          <p style={{ fontSize: "13px", color: C.tx, lineHeight: 1.5 }}>
+            🎯 Searching for opportunities that accept projects in <strong style={{ color: C.pp }}>{selectedProj.stage}</strong> stage only. Results for other stages will be excluded.
           </p>
         </Card>
       )}
@@ -1905,6 +1940,23 @@ Find 8-12 real opportunities. Prioritize strong matches.`;
                   }}>WHY THIS FITS</p>
                   <p style={{ fontSize: "13px", lineHeight: 1.5 }}>{o.matchReason}</p>
                 </div>
+                {o.stageEligibility && (
+                  <div style={{
+                    background: C.tl + "08",
+                    border: "1px solid " + C.tl + "20",
+                    borderRadius: "6px",
+                    padding: "10px 12px",
+                    marginBottom: "10px"
+                  }}>
+                    <p style={{
+                      fontSize: "11px",
+                      fontFamily: FN.m,
+                      color: C.tl,
+                      marginBottom: "4px"
+                    }}>STAGE MATCH</p>
+                    <p style={{ fontSize: "12px", lineHeight: 1.5, color: C.tm }}>{o.stageEligibility}</p>
+                  </div>
+                )}
                 <div style={{
                   display: "flex",
                   gap: "16px",
