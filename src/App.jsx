@@ -1050,6 +1050,16 @@ Armed with your research, write each section with these mandates:
 
 ▸ **USE ATTACHED MATERIALS**: If there's a screenplay, quote or reference specific scenes. If there's a pitch deck, reference its visual language. If there's a look book, describe its aesthetic identity. Do not write as if you haven't read the materials.
 
+▸ **HUMANIZE THE PROSE (CRITICAL — AI-DETECTION DEFENSE)**: Grant committees have developed a sharp ear for AI-generated writing and will downgrade applications they suspect were machine-written. Your prose must NOT read as AI-generated. Specifically:
+   - **Vary sentence length dramatically.** Mix 4-word sentences with 30-word ones. Avoid the even, balanced rhythm that characterizes LLM output.
+   - **BAN these overused grant-speak words entirely**: "compelling," "timely," "important," "vital," "transformative," "resonates," "navigates," "explores," "delves into," "tapestry," "landscape," "journey," "powerful," "profound," "unique perspective," "diverse voices" (as generic phrase), "meaningful," "thought-provoking," "visceral," "nuanced," "at its core," "multifaceted." These are the tells that get flagged.
+   - **Embrace idiosyncrasy.** A genuinely human artist statement has weird specific details, occasional sentence fragments, personal asides, unexpected word choices. Include these.
+   - **Cut hedging language.** "Seeks to explore" → "explores." "Aims to" → "does." "Attempts to" → "does."
+   - **Specificity over abstraction.** Instead of "the film examines themes of loss" — name the exact scene, the exact image, the exact sound.
+   - **One perfect weird detail beats five generic beautiful sentences.** A grant reader remembers "the grandmother hides the matchbook in her bra" — not "themes of resilience across generations."
+   - **Don't open paragraphs with the project title or "This film."** Break the predictable rhythm of template-driven applications.
+   - **Write how the director actually talks, not how grant writers write.** Read your own sentences aloud mentally — if they sound like a press release, rewrite them.
+
 ▸ **STRATEGICALLY FOREGROUND THE TEAM**: The project intelligence includes deep research on every team member — their awards, credits, institutional ties, and leverage points. Use this intelligently:
    - If THIS opportunity's committee is likely to weigh specific credentials (Oscar winners, Emmy winners, Sundance alums, Academy members, past festival winners, institutional fellows), LEAD with the relevant team member and their relevant credential
    - Match the named collaborator to what the org values. If the org cares about commercial viability, foreground producers with box office credits. If they care about art-house bona fides, foreground collaborators with Cannes/Venice history. If they care about social impact, foreground team members whose past work aligns.
@@ -1132,16 +1142,34 @@ No generic language. No boilerplate. Only write what's actually asked for. Every
       if (parsed) {
         const cost = parseFee(o.submissionFee);
         const currentPay = payRef.current;
+        // Initialize material tracking on any externalMaterials the AI returned
+        if (parsed.externalMaterials && Array.isArray(parsed.externalMaterials)) {
+          parsed.externalMaterials = parsed.externalMaterials.map(m => ({
+            ...m,
+            status: "pending",  // pending | requested | received | na
+            dueDate: null,
+            assignedTo: "",
+            notes: ""
+          }));
+        }
         const newApp = {
           id: Date.now().toString(),
           oppName: o.name,
           oppOrg: o.organization,
           oppUrl: o.url,
+          oppType: o.type,
+          oppDeadline: o.deadline || null,
+          oppAmount: o.amount || null,
+          matchStrength: o.matchStrength || "moderate",
           projTitle: p.title,
           hadAnalysis: !!a,
           hadFiles: projectFiles.length > 0,
           deepResearch: true,
           status: "draft",
+          outcome: null,  // null | won | rejected | waitlisted | ghosted
+          outcomeDate: null,
+          outcomeNotes: "",
+          postMortem: "",
           cost: cost,
           feeLabel: o.submissionFee || "?",
           payId: currentPay.defaultMethodId,
@@ -1795,6 +1823,68 @@ function DashView({ profile, projects, apps, pay, go, spent, deadlines }) {
   const urgent = deadlines.filter(d => d.dl !== null && d.dl >= 0 && d.dl <= 7);
   const drafts = apps.filter(a => a.status === "draft").length;
 
+  // Portfolio strategy calculations
+  const activeApps = apps.filter(a => a.status === "draft" || a.status === "approved" || a.status === "submitted");
+  const mix = {
+    reach: activeApps.filter(a => a.matchStrength === "speculative").length,
+    target: activeApps.filter(a => a.matchStrength === "moderate").length,
+    safety: activeApps.filter(a => a.matchStrength === "strong").length,
+    unknown: activeApps.filter(a => !a.matchStrength).length
+  };
+  const totalMix = mix.reach + mix.target + mix.safety + mix.unknown;
+
+  // Outcome stats for success rate
+  const withOutcome = apps.filter(a => a.outcome).length;
+  const wins = apps.filter(a => a.outcome === "won").length;
+  const successRate = withOutcome > 0 ? Math.round((wins / withOutcome) * 100) : null;
+
+  // Fees committed (drafts + approved + submitted not yet received outcomes)
+  const feesCommitted = apps
+    .filter(a => (a.status === "draft" || a.status === "approved") && a.cost > 0)
+    .reduce((s, a) => s + a.cost, 0);
+  const feesSpent = apps
+    .filter(a => a.status === "submitted")
+    .reduce((s, a) => s + (a.cost || 0), 0);
+
+  // Upcoming material deadlines across all apps
+  const materialDeadlines = [];
+  apps.forEach(app => {
+    if (app.status === "submitted") return;
+    if (app.content && app.content.externalMaterials) {
+      app.content.externalMaterials.forEach(mat => {
+        if (mat.dueDate && mat.status !== "received" && mat.status !== "na") {
+          const daysUntil = Math.ceil((new Date(mat.dueDate) - new Date()) / (1000 * 60 * 60 * 24));
+          materialDeadlines.push({
+            appName: app.oppName,
+            projTitle: app.projTitle,
+            matName: mat.name,
+            assignedTo: mat.assignedTo,
+            daysUntil,
+            dueDate: mat.dueDate
+          });
+        }
+      });
+    }
+  });
+  materialDeadlines.sort((a, b) => a.daysUntil - b.daysUntil);
+
+  // Portfolio warnings
+  const warnings = [];
+  if (totalMix > 3) {
+    if (mix.reach / totalMix > 0.7) {
+      warnings.push("Your pipeline is heavily weighted toward long-shots. Consider adding some moderate-match targets to balance risk and burnout.");
+    }
+    if (mix.safety === 0 && mix.target === 0 && totalMix > 5) {
+      warnings.push("No strong-match opportunities in your pipeline. These are your highest-probability wins — search for some in Discover.");
+    }
+  }
+  if (feesCommitted > pay.monthlyBudget * 1.5) {
+    warnings.push("You have $" + feesCommitted.toFixed(0) + " in draft/approved fees — that's over your monthly budget. Review before submitting.");
+  }
+  if (withOutcome >= 5 && successRate !== null && successRate < 20) {
+    warnings.push("Success rate is " + successRate + "% across " + withOutcome + " decided applications. Consider reviewing post-mortems to find patterns.");
+  }
+
   const stats = [
     { l: "Projects", v: projects.length, c: C.ac },
     { l: "Analyzed", v: projects.filter(p => p.analysis).length + "/" + projects.length, c: C.tl },
@@ -1819,7 +1909,7 @@ function DashView({ profile, projects, apps, pay, go, spent, deadlines }) {
         display: "grid",
         gridTemplateColumns: "repeat(4, 1fr)",
         gap: "12px",
-        marginBottom: "24px"
+        marginBottom: "16px"
       }}>
         {stats.map(s => (
           <Card key={s.l}>
@@ -1840,6 +1930,154 @@ function DashView({ profile, projects, apps, pay, go, spent, deadlines }) {
           </Card>
         ))}
       </div>
+
+      {totalMix > 0 && (
+        <Card style={{ marginBottom: "16px", borderColor: C.ac + "30" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "14px" }}>
+            <h3 style={{ fontFamily: FN.d, fontSize: "18px", fontStyle: "italic" }}>
+              📊 Portfolio Strategy
+            </h3>
+            {successRate !== null && (
+              <p style={{ fontSize: "12px", color: C.tm, fontFamily: FN.m }}>
+                SUCCESS RATE: <span style={{ color: successRate >= 30 ? C.ok : (successRate >= 15 ? C.wn : C.dn), fontWeight: 700 }}>{successRate}%</span> ({wins}/{withOutcome} decided)
+              </p>
+            )}
+          </div>
+
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, 1fr)",
+            gap: "10px",
+            marginBottom: "14px"
+          }}>
+            <div style={{
+              background: C.ok + "10",
+              padding: "14px",
+              borderRadius: "8px",
+              borderLeft: "3px solid " + C.ok
+            }}>
+              <p style={{ ...LS, color: C.ok, marginBottom: "6px" }}>SAFETY / STRONG MATCH</p>
+              <p style={{ fontFamily: FN.d, fontSize: "26px", fontStyle: "italic", color: C.ok }}>
+                {mix.safety}
+              </p>
+              <p style={{ fontSize: "10px", color: C.tm, marginTop: "2px" }}>
+                Highest probability wins
+              </p>
+            </div>
+            <div style={{
+              background: C.wn + "10",
+              padding: "14px",
+              borderRadius: "8px",
+              borderLeft: "3px solid " + C.wn
+            }}>
+              <p style={{ ...LS, color: C.wn, marginBottom: "6px" }}>TARGET / MODERATE</p>
+              <p style={{ fontFamily: FN.d, fontSize: "26px", fontStyle: "italic", color: C.wn }}>
+                {mix.target}
+              </p>
+              <p style={{ fontSize: "10px", color: C.tm, marginTop: "2px" }}>
+                Realistic stretch
+              </p>
+            </div>
+            <div style={{
+              background: C.pp + "10",
+              padding: "14px",
+              borderRadius: "8px",
+              borderLeft: "3px solid " + C.pp
+            }}>
+              <p style={{ ...LS, color: C.pp, marginBottom: "6px" }}>REACH / LONG SHOT</p>
+              <p style={{ fontFamily: FN.d, fontSize: "26px", fontStyle: "italic", color: C.pp }}>
+                {mix.reach}
+              </p>
+              <p style={{ fontSize: "10px", color: C.tm, marginTop: "2px" }}>
+                Aspirational
+              </p>
+            </div>
+          </div>
+
+          <div style={{
+            display: "flex",
+            gap: "20px",
+            padding: "12px 14px",
+            background: C.bg,
+            borderRadius: "6px",
+            marginBottom: warnings.length > 0 ? "12px" : 0
+          }}>
+            <div>
+              <p style={{ ...LS, marginBottom: "4px" }}>FEES COMMITTED</p>
+              <p style={{ fontFamily: FN.d, fontSize: "18px", fontStyle: "italic", color: C.wn }}>
+                ${feesCommitted.toFixed(0)}
+              </p>
+              <p style={{ fontSize: "10px", color: C.tm }}>draft + approved</p>
+            </div>
+            <div>
+              <p style={{ ...LS, marginBottom: "4px" }}>FEES SPENT</p>
+              <p style={{ fontFamily: FN.d, fontSize: "18px", fontStyle: "italic", color: C.tx }}>
+                ${feesSpent.toFixed(0)}
+              </p>
+              <p style={{ fontSize: "10px", color: C.tm }}>submitted</p>
+            </div>
+            <div>
+              <p style={{ ...LS, marginBottom: "4px" }}>IN PIPELINE</p>
+              <p style={{ fontFamily: FN.d, fontSize: "18px", fontStyle: "italic", color: C.ac }}>
+                {activeApps.length}
+              </p>
+              <p style={{ fontSize: "10px", color: C.tm }}>active applications</p>
+            </div>
+          </div>
+
+          {warnings.map((w, i) => (
+            <div key={i} style={{
+              padding: "10px 14px",
+              background: C.wn + "10",
+              border: "1px solid " + C.wn + "40",
+              borderRadius: "6px",
+              marginTop: "8px"
+            }}>
+              <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5 }}>
+                ⚠ {w}
+              </p>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {materialDeadlines.length > 0 && (
+        <Card style={{ marginBottom: "16px", borderColor: C.wn + "40" }}>
+          <h3 style={{ fontFamily: FN.d, fontSize: "18px", fontStyle: "italic", marginBottom: "12px" }}>
+            📎 External Materials Due
+          </h3>
+          <p style={{ fontSize: "11px", color: C.tm, marginBottom: "12px" }}>
+            Letters of rec, artwork, videos, etc. that need to be gathered before submitting
+          </p>
+          {materialDeadlines.slice(0, 5).map((m, i) => (
+            <div key={i} style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "10px 14px",
+              background: C.bg,
+              borderRadius: "6px",
+              borderLeft: "3px solid " + (m.daysUntil < 0 ? C.dn : (m.daysUntil <= 7 ? C.wn : C.tl)),
+              marginBottom: "6px"
+            }}>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: "13px", fontWeight: 500 }}>{m.matName}</p>
+                <p style={{ fontSize: "11px", color: C.tm }}>
+                  {m.appName} · {m.projTitle}{m.assignedTo ? " · " + m.assignedTo : ""}
+                </p>
+              </div>
+              <p style={{
+                fontFamily: FN.m,
+                fontSize: "12px",
+                fontWeight: 700,
+                color: m.daysUntil < 0 ? C.dn : (m.daysUntil <= 7 ? C.wn : C.tl)
+              }}>
+                {m.daysUntil < 0 ? Math.abs(m.daysUntil) + "d overdue" : m.daysUntil + "d"}
+              </p>
+            </div>
+          ))}
+        </Card>
+      )}
 
       {urgent.length > 0 && (
         <Card style={{ marginBottom: "16px", borderColor: C.dn + "50" }}>
@@ -3407,6 +3645,9 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
   const [editingKey, setEditingKey] = useState(null);
   const [draftText, setDraftText] = useState("");
   const [refreshMdl, setRefreshMdl] = useState(null);
+  const [outcomeMdl, setOutcomeMdl] = useState(null);
+  const [outcomeForm, setOutcomeForm] = useState({ outcome: "", notes: "", postMortem: "" });
+  const [humanizingKey, setHumanizingKey] = useState(null);
   const [listFilter, setListFilter] = useState("all");
 
   // Derive busy + errors from global jobs
@@ -3560,6 +3801,60 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
       setDraftText("");
     };
 
+    const humanizeSection = async (sectionKey, currentText, sectionTitle) => {
+      if (!currentText) return;
+      setHumanizingKey(sectionKey);
+      try {
+        const prompt = `You are rewriting a grant application section to remove any AI-detection tells. The reviewer may use AI-detection tools or simply have a trained ear for machine-generated prose. Your job is to rewrite this section so it reads as genuinely human-written while preserving ALL the factual content and strategic emphasis of the original.
+
+SECTION TITLE: ${sectionTitle}
+CURRENT TEXT:
+${currentText}
+
+REWRITE MANDATES:
+1. BAN these words entirely: "compelling", "timely", "important", "vital", "transformative", "resonates", "navigates", "explores", "delves into", "tapestry", "landscape", "journey", "powerful", "profound", "unique perspective", "diverse voices" (as generic phrase), "meaningful", "thought-provoking", "visceral", "nuanced", "at its core", "multifaceted". These are the biggest AI tells. Find synonyms or restructure sentences entirely to avoid them.
+2. VARY sentence length dramatically. Mix 4-word sentences with 30-word ones. Avoid the even, balanced rhythm that characterizes LLM output.
+3. Cut hedging language: "seeks to explore" → "explores", "aims to" → "does", "attempts to" → "does".
+4. Add specificity. Where the current text is abstract ("themes of loss"), reach into the project and replace with specific imagery or scenes (the grandmother's matchbook, the blue neon of the diner sign).
+5. Embrace idiosyncrasy. Include unexpected word choices, occasional sentence fragments, personal asides — the tells of actual human writing.
+6. Cut filler. Every word must earn its place.
+7. DO NOT change the substantive content, strategic emphasis, or factual claims. Preserve all references to team members, credits, and specific project details.
+8. DO NOT make it longer. Tighter is better.
+
+Respond with ONLY the rewritten text. No preamble, no explanation, no quotes around it, no markdown. Just the rewritten section.`;
+
+        const rewritten = await askClaude(prompt);
+        if (rewritten && rewritten.trim()) {
+          const updated = [...apps];
+          const newContent = { ...updated[view].content };
+          if (sectionKey.startsWith("custom:")) {
+            const customKey = sectionKey.slice(7);
+            newContent.customSections = (newContent.customSections || []).map(cs =>
+              cs.key === customKey ? { ...cs, content: rewritten.trim() } : cs
+            );
+          } else {
+            newContent[sectionKey] = rewritten.trim();
+          }
+          updated[view] = {
+            ...updated[view],
+            content: newContent,
+            editedAt: new Date().toISOString(),
+            humanized: true,
+            status: updated[view].status === "approved" ? "draft" : updated[view].status,
+            checks: updated[view].status === "approved"
+              ? { content: false, cost: false, ready: false }
+              : updated[view].checks
+          };
+          save(updated);
+        }
+      } catch (e) {
+        console.error("Humanize error:", e);
+        alert("Humanize failed: " + (e.message || "unknown error"));
+      } finally {
+        setHumanizingKey(null);
+      }
+    };
+
     return (
       <div>
         <div style={{
@@ -3630,10 +3925,52 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
                   Submit{app.cost > 0 ? " ($" + app.cost.toFixed(2) + ")" : ""}
                 </Btn>
               )}
-              {app.status === "submitted" && (
-                <span style={{ fontSize: "13px", color: C.ok, fontFamily: FN.m }}>
-                  ✓ Submitted
-                </span>
+              {app.status === "submitted" && !app.outcome && (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
+                  <span style={{ fontSize: "13px", color: C.ok, fontFamily: FN.m }}>
+                    ✓ Submitted
+                  </span>
+                  <Btn
+                    variant="teal"
+                    small
+                    onClick={() => {
+                      setOutcomeForm({ outcome: "", notes: "", postMortem: "" });
+                      setOutcomeMdl(view);
+                    }}
+                  >Record Outcome</Btn>
+                </div>
+              )}
+              {app.status === "submitted" && app.outcome && (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}>
+                  <Bdg color={
+                    app.outcome === "won" ? C.ok :
+                    app.outcome === "waitlisted" ? C.ac :
+                    app.outcome === "rejected" ? C.dn :
+                    C.tm
+                  }>{
+                    app.outcome === "won" ? "🏆 WON" :
+                    app.outcome === "waitlisted" ? "⏳ WAITLISTED" :
+                    app.outcome === "rejected" ? "✗ REJECTED" :
+                    "— GHOSTED"
+                  }</Bdg>
+                  {app.outcomeDate && (
+                    <p style={{ fontSize: "11px", color: C.tm }}>
+                      {new Date(app.outcomeDate).toLocaleDateString()}
+                    </p>
+                  )}
+                  <Btn
+                    variant="ghost"
+                    small
+                    onClick={() => {
+                      setOutcomeForm({
+                        outcome: app.outcome,
+                        notes: app.outcomeNotes || "",
+                        postMortem: app.postMortem || ""
+                      });
+                      setOutcomeMdl(view);
+                    }}
+                  >✎ Edit Outcome</Btn>
+                </div>
               )}
             </div>
           </div>
@@ -3839,56 +4176,144 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
           </Card>
         )}
 
-        {c.externalMaterials && c.externalMaterials.length > 0 && (
-          <Card style={{
-            marginBottom: "12px",
-            borderColor: C.wn + "50",
-            background: C.wn + "08"
-          }}>
-            <h3 style={{
-              fontFamily: FN.d,
-              fontSize: "18px",
-              fontStyle: "italic",
-              color: C.wn,
-              marginBottom: "4px"
-            }}>⚠ External Materials You Must Provide</h3>
-            <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "14px" }}>
-              These can't be auto-generated — gather them before submitting
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              {c.externalMaterials.map((mat, i) => (
-                <div key={i} style={{
-                  background: C.bg,
-                  padding: "12px 14px",
-                  borderRadius: "6px",
-                  borderLeft: "3px solid " + (mat.critical ? C.dn : C.wn)
-                }}>
-                  <div style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    marginBottom: "4px"
-                  }}>
-                    <p style={{ fontSize: "13px", fontWeight: 600, color: C.tx }}>
-                      {mat.name}
-                    </p>
-                    {mat.critical && <Bdg color={C.dn}>REQUIRED</Bdg>}
-                  </div>
-                  {mat.requirement && (
-                    <p style={{ fontSize: "12px", color: C.tm, marginBottom: "4px", fontFamily: FN.m }}>
-                      {mat.requirement}
-                    </p>
-                  )}
-                  {mat.note && (
-                    <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5 }}>
-                      {mat.note}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </Card>
-        )}
+        {c.externalMaterials && c.externalMaterials.length > 0 && (() => {
+          const readyCount = c.externalMaterials.filter(m => m.status === "received" || m.status === "na").length;
+          const totalCount = c.externalMaterials.length;
+          const allReady = readyCount === totalCount;
+          const updateMaterial = (idx, patch) => {
+            const updated = [...apps];
+            const newMaterials = [...(updated[view].content.externalMaterials || [])];
+            newMaterials[idx] = { ...newMaterials[idx], ...patch };
+            updated[view] = {
+              ...updated[view],
+              content: { ...updated[view].content, externalMaterials: newMaterials },
+              editedAt: new Date().toISOString()
+            };
+            save(updated);
+          };
+          return (
+            <Card style={{
+              marginBottom: "12px",
+              borderColor: allReady ? C.ok + "50" : C.wn + "50",
+              background: (allReady ? C.ok : C.wn) + "08"
+            }}>
+              <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "4px"
+              }}>
+                <h3 style={{
+                  fontFamily: FN.d,
+                  fontSize: "18px",
+                  fontStyle: "italic",
+                  color: allReady ? C.ok : C.wn
+                }}>{allReady ? "✓" : "⚠"} External Materials</h3>
+                <Bdg color={allReady ? C.ok : C.wn}>
+                  {readyCount} / {totalCount} ready
+                </Bdg>
+              </div>
+              <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "14px" }}>
+                Track what you need to gather before submitting — letters of rec, artwork, videos, etc.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {c.externalMaterials.map((mat, i) => {
+                  const isDone = mat.status === "received" || mat.status === "na";
+                  const isOverdue = mat.dueDate && new Date(mat.dueDate) < new Date() && !isDone;
+                  return (
+                    <div key={i} style={{
+                      background: C.bg,
+                      padding: "12px 14px",
+                      borderRadius: "6px",
+                      borderLeft: "3px solid " + (isDone ? C.ok : (isOverdue ? C.dn : (mat.critical ? C.dn : C.wn))),
+                      opacity: isDone ? 0.7 : 1
+                    }}>
+                      <div style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: "10px",
+                        marginBottom: "8px"
+                      }}>
+                        <input
+                          type="checkbox"
+                          checked={mat.status === "received"}
+                          onChange={() => updateMaterial(i, {
+                            status: mat.status === "received" ? "pending" : "received"
+                          })}
+                          style={{ marginTop: "3px", cursor: "pointer", width: "16px", height: "16px" }}
+                        />
+                        <div style={{ flex: 1 }}>
+                          <div style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            marginBottom: "4px",
+                            flexWrap: "wrap"
+                          }}>
+                            <p style={{
+                              fontSize: "13px",
+                              fontWeight: 600,
+                              color: C.tx,
+                              textDecoration: isDone ? "line-through" : "none"
+                            }}>
+                              {mat.name}
+                            </p>
+                            {mat.critical && <Bdg color={C.dn}>REQUIRED</Bdg>}
+                            {mat.status === "requested" && <Bdg color={C.ac}>REQUESTED</Bdg>}
+                            {isOverdue && <Bdg color={C.dn}>OVERDUE</Bdg>}
+                          </div>
+                          {mat.requirement && (
+                            <p style={{ fontSize: "12px", color: C.tm, marginBottom: "4px", fontFamily: FN.m }}>
+                              {mat.requirement}
+                            </p>
+                          )}
+                          {mat.note && (
+                            <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5, marginBottom: "8px" }}>
+                              {mat.note}
+                            </p>
+                          )}
+                          <div style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr 1fr",
+                            gap: "6px",
+                            marginTop: "8px"
+                          }}>
+                            <select
+                              value={mat.status || "pending"}
+                              onChange={e => updateMaterial(i, { status: e.target.value })}
+                              style={{ fontSize: "11px", padding: "6px" }}
+                            >
+                              <option value="pending">⚪ Pending</option>
+                              <option value="requested">⏳ Requested</option>
+                              <option value="received">✓ Received</option>
+                              <option value="na">— N/A</option>
+                            </select>
+                            <input
+                              type="date"
+                              value={mat.dueDate ? mat.dueDate.slice(0, 10) : ""}
+                              onChange={e => updateMaterial(i, {
+                                dueDate: e.target.value ? new Date(e.target.value).toISOString() : null
+                              })}
+                              style={{ fontSize: "11px", padding: "6px" }}
+                              placeholder="Due"
+                            />
+                            <input
+                              type="text"
+                              value={mat.assignedTo || ""}
+                              placeholder="Who (e.g. Erika)"
+                              onChange={e => updateMaterial(i, { assignedTo: e.target.value })}
+                              style={{ fontSize: "11px", padding: "6px" }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          );
+        })()}
 
         {sections.length === 0 && (
           <Card style={{
@@ -3920,12 +4345,21 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
                   textTransform: "uppercase"
                 }}>{s.t}</h3>
                 {canEdit && !isEditing && (
-                  <Btn
-                    variant="ghost"
-                    small
-                    onClick={() => startEdit(s.k, s.v)}
-                    style={{ color: C.tm }}
-                  >✎ Edit</Btn>
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <Btn
+                      variant="ghost"
+                      small
+                      onClick={() => humanizeSection(s.k, s.v, s.t)}
+                      disabled={humanizingKey === s.k}
+                      style={{ color: C.pp }}
+                    >{humanizingKey === s.k ? "✨ Humanizing..." : "✨ Humanize"}</Btn>
+                    <Btn
+                      variant="ghost"
+                      small
+                      onClick={() => startEdit(s.k, s.v)}
+                      style={{ color: C.tm }}
+                    >✎ Edit</Btn>
+                  </div>
                 )}
               </div>
               {isEditing ? (
@@ -4366,11 +4800,96 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
             </div>
           )}
         </Mdl>
+
+        <Mdl
+          open={outcomeMdl !== null}
+          onClose={() => setOutcomeMdl(null)}
+          title="Record Outcome"
+          width="560px"
+        >
+          {outcomeMdl !== null && apps[outcomeMdl] && (
+            <div>
+              <p style={{ fontSize: "13px", color: C.tm, lineHeight: 1.6, marginBottom: "16px" }}>
+                Track the outcome of <strong style={{ color: C.tx }}>{apps[outcomeMdl].oppName}</strong> so you can learn from wins and losses over time.
+              </p>
+              <div style={{ marginBottom: "16px" }}>
+                <label style={LS}>Outcome</label>
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "8px",
+                  marginTop: "6px"
+                }}>
+                  {[
+                    { id: "won", label: "🏆 Won / Accepted", color: C.ok },
+                    { id: "waitlisted", label: "⏳ Waitlisted", color: C.ac },
+                    { id: "rejected", label: "✗ Rejected", color: C.dn },
+                    { id: "ghosted", label: "— No response", color: C.tm }
+                  ].map(opt => (
+                    <button
+                      key={opt.id}
+                      onClick={() => setOutcomeForm({ ...outcomeForm, outcome: opt.id })}
+                      style={{
+                        padding: "12px",
+                        background: outcomeForm.outcome === opt.id ? opt.color + "20" : C.bg,
+                        border: "1px solid " + (outcomeForm.outcome === opt.id ? opt.color : C.bd),
+                        borderRadius: "6px",
+                        color: outcomeForm.outcome === opt.id ? opt.color : C.tx,
+                        fontSize: "13px",
+                        cursor: "pointer",
+                        fontFamily: FN.b,
+                        textAlign: "left"
+                      }}
+                    >{opt.label}</button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ marginBottom: "16px" }}>
+                <label style={LS}>Notes (what they said, if anything)</label>
+                <textarea
+                  rows={2}
+                  value={outcomeForm.notes}
+                  placeholder="Any feedback received, reasons given, next steps offered..."
+                  onChange={e => setOutcomeForm({ ...outcomeForm, notes: e.target.value })}
+                />
+              </div>
+              <div style={{ marginBottom: "16px" }}>
+                <label style={LS}>Post-mortem (what you learned, for next time)</label>
+                <textarea
+                  rows={4}
+                  value={outcomeForm.postMortem}
+                  placeholder="What worked? What didn't? What would you do differently? Which parts of the application should be reused vs. overhauled for next cycle?"
+                  onChange={e => setOutcomeForm({ ...outcomeForm, postMortem: e.target.value })}
+                />
+              </div>
+              <div style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "10px"
+              }}>
+                <Btn variant="secondary" onClick={() => setOutcomeMdl(null)}>Cancel</Btn>
+                <Btn
+                  disabled={!outcomeForm.outcome}
+                  onClick={() => {
+                    const updated = [...apps];
+                    updated[outcomeMdl] = {
+                      ...updated[outcomeMdl],
+                      outcome: outcomeForm.outcome,
+                      outcomeDate: updated[outcomeMdl].outcomeDate || new Date().toISOString(),
+                      outcomeNotes: outcomeForm.notes,
+                      postMortem: outcomeForm.postMortem
+                    };
+                    save(updated);
+                    setOutcomeMdl(null);
+                  }}
+                >Save Outcome</Btn>
+              </div>
+            </div>
+          )}
+        </Mdl>
       </div>
     );
   }
-
-  /* ── LIST ── */
   return (
     <div>
       <div style={{ marginBottom: "28px" }}>
@@ -4456,47 +4975,62 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
               all: apps.length,
               draft: apps.filter(a => a.status === "draft").length,
               approved: apps.filter(a => a.status === "approved").length,
-              submitted: apps.filter(a => a.status === "submitted").length
+              submitted: apps.filter(a => a.status === "submitted").length,
+              won: apps.filter(a => a.outcome === "won").length,
+              rejected: apps.filter(a => a.outcome === "rejected").length,
+              waitlisted: apps.filter(a => a.outcome === "waitlisted").length,
+              ghosted: apps.filter(a => a.outcome === "ghosted").length
             };
             const totalSubmitted = apps
               .filter(a => a.status === "submitted")
               .reduce((s, a) => s + (a.cost || 0), 0);
+            const withOutcome = counts.won + counts.rejected + counts.waitlisted + counts.ghosted;
+            const successRate = withOutcome > 0 ? ((counts.won / withOutcome) * 100).toFixed(0) : null;
             const filterOptions = [
               { id: "all", label: "All", count: counts.all, color: C.tx },
               { id: "draft", label: "Drafts", count: counts.draft, color: C.wn },
               { id: "approved", label: "Approved", count: counts.approved, color: C.ac },
-              { id: "submitted", label: "Submitted", count: counts.submitted, color: C.ok }
+              { id: "submitted", label: "Submitted", count: counts.submitted, color: C.ok },
+              { id: "won", label: "🏆 Won", count: counts.won, color: C.ok },
+              { id: "rejected", label: "✗ Rejected", count: counts.rejected, color: C.dn },
+              { id: "waitlisted", label: "⏳ Waitlisted", count: counts.waitlisted, color: C.ac }
             ];
             return (
               <div>
                 <Card style={{ marginBottom: "14px" }}>
                   <div style={{
                     display: "grid",
-                    gridTemplateColumns: "repeat(4, 1fr)",
+                    gridTemplateColumns: "repeat(5, 1fr)",
                     gap: "12px"
                   }}>
                     <div>
                       <p style={{ ...LS, marginBottom: "4px" }}>TOTAL</p>
-                      <p style={{ fontFamily: FN.d, fontSize: "24px", fontStyle: "italic", color: C.tx }}>
+                      <p style={{ fontFamily: FN.d, fontSize: "22px", fontStyle: "italic", color: C.tx }}>
                         {counts.all}
                       </p>
                     </div>
                     <div>
                       <p style={{ ...LS, marginBottom: "4px" }}>SUBMITTED</p>
-                      <p style={{ fontFamily: FN.d, fontSize: "24px", fontStyle: "italic", color: C.ok }}>
+                      <p style={{ fontFamily: FN.d, fontSize: "22px", fontStyle: "italic", color: C.ok }}>
                         {counts.submitted}
                       </p>
                     </div>
                     <div>
-                      <p style={{ ...LS, marginBottom: "4px" }}>TOTAL SPENT</p>
-                      <p style={{ fontFamily: FN.d, fontSize: "24px", fontStyle: "italic", color: C.wn }}>
-                        ${totalSubmitted.toFixed(2)}
+                      <p style={{ ...LS, marginBottom: "4px" }}>SPENT</p>
+                      <p style={{ fontFamily: FN.d, fontSize: "22px", fontStyle: "italic", color: C.wn }}>
+                        ${totalSubmitted.toFixed(0)}
                       </p>
                     </div>
                     <div>
-                      <p style={{ ...LS, marginBottom: "4px" }}>STALE</p>
-                      <p style={{ fontFamily: FN.d, fontSize: "24px", fontStyle: "italic", color: C.wn }}>
-                        {apps.filter(isStale).length}
+                      <p style={{ ...LS, marginBottom: "4px" }}>WON</p>
+                      <p style={{ fontFamily: FN.d, fontSize: "22px", fontStyle: "italic", color: C.ok }}>
+                        {counts.won}
+                      </p>
+                    </div>
+                    <div>
+                      <p style={{ ...LS, marginBottom: "4px" }}>SUCCESS %</p>
+                      <p style={{ fontFamily: FN.d, fontSize: "22px", fontStyle: "italic", color: successRate !== null ? C.ok : C.tm }}>
+                        {successRate !== null ? successRate + "%" : "—"}
                       </p>
                     </div>
                   </div>
@@ -4527,7 +5061,9 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
           {(() => {
             const filtered = listFilter === "all"
               ? apps
-              : apps.filter(a => a.status === listFilter);
+              : (["won", "rejected", "waitlisted", "ghosted"].includes(listFilter))
+                ? apps.filter(a => a.outcome === listFilter)
+                : apps.filter(a => a.status === listFilter);
             // Sort: most recent first, using the most recent timestamp on each app
             const sorted = [...filtered].sort((a, b) => {
               const ta = new Date(a.submittedAt || a.refreshedAt || a.editedAt || a.createdAt).getTime();
@@ -4576,6 +5112,10 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
                     {app.hadFiles && <span>📎</span>}
                     {app.deepResearch && <span title="Deep opportunity research">🔍</span>}
                     {isStale(app) && <Bdg color={C.wn}>STALE</Bdg>}
+                    {app.outcome === "won" && <Bdg color={C.ok}>🏆 WON</Bdg>}
+                    {app.outcome === "rejected" && <Bdg color={C.dn}>✗ REJECTED</Bdg>}
+                    {app.outcome === "waitlisted" && <Bdg color={C.ac}>⏳ WAITLISTED</Bdg>}
+                    {app.outcome === "ghosted" && <Bdg color={C.tm}>— GHOSTED</Bdg>}
                     {app.cost > 0 ? (
                       <span style={{
                         fontFamily: FN.m,
