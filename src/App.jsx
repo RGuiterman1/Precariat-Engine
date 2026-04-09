@@ -52,7 +52,7 @@ const FILE_CATEGORIES = [
   { id: "other", label: "Other Materials", icon: "📎", accept: ".pdf,.txt,.png,.jpg,.jpeg", hint: "PDF, text, or image" }
 ];
 
-const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4MB per file
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB per file
 
 const C = {
   bg: "#0a0a0c", sf: "#131318", bd: "#222230", bl: "#2a2a3a",
@@ -394,6 +394,9 @@ async function askClaude(content, search, attempt = 0) {
     if (res.status === 429) throw new Error("Rate limited by Anthropic. Try again in a minute, or run fewer operations in parallel.");
     if (res.status === 529) throw new Error("Anthropic API is overloaded. Try again shortly.");
     if (res.status === 400 && msg.includes("credit")) throw new Error("Out of API credits. Add more at console.anthropic.com.");
+    if (res.status === 400 && (msg.includes("PDF") || msg.includes("pages") || msg.includes("document"))) {
+      throw new Error("PDF too long (over 100 pages). Re-upload the screenplay as .txt: open the PDF, copy all text, paste into a .txt file, then upload that instead.");
+    }
     throw new Error(msg);
   }
   const data = await res.json();
@@ -1022,6 +1025,7 @@ Be brutally specific to THIS project and THIS team only. No generic advice. Rese
       if (projectFiles.length > 0) {
         const blocks = [{ type: "text", text: textPrompt }];
         for (const f of projectFiles) {
+          if (f.skipInAI) continue; // Stored for submission only, not sent to AI
           if (f.isText) {
             blocks.push({
               type: "text",
@@ -1383,6 +1387,7 @@ No generic language. No boilerplate. Only write what's actually asked for. Every
       if (projectFiles.length > 0) {
         const blocks = [{ type: "text", text: textPrompt }];
         for (const f of projectFiles) {
+          if (f.skipInAI) continue; // Stored for submission only, not sent to AI
           if (f.isText) {
             blocks.push({ type: "text", text: "\n--- " + f.name + " ---\n" + f.data });
           } else if (f.mediaType === "application/pdf") {
@@ -1641,6 +1646,7 @@ Respond ONLY with JSON (no markdown):
       if (projectFiles.length > 0) {
         const blocks = [{ type: "text", text: textPrompt }];
         for (const f of projectFiles) {
+          if (f.skipInAI) continue; // Stored for submission only, not sent to AI
           if (f.isText) {
             blocks.push({ type: "text", text: "\n--- " + f.name + " ---\n" + f.data });
           } else if (f.mediaType === "application/pdf") {
@@ -2533,14 +2539,19 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
   const handleFileUpload = async (category, fileList) => {
     setUploadErr("");
     const newFiles = [];
+    const skipped = [];
     for (const file of fileList) {
       if (file.size > MAX_FILE_SIZE) {
-        setUploadErr(file.name + " exceeds 4MB limit");
+        setUploadErr(file.name + " exceeds 10MB limit");
         continue;
       }
       try {
         const mediaType = getMediaType(file.name);
         const isText = mediaType === "text/plain";
+        // Heuristic: screenplay PDFs over ~1.5MB are very likely 100+ pages
+        // and will fail the Anthropic API's document limit. We still store them
+        // (for submission purposes) but skip them when sending to the AI.
+        const skipInAI = category === "screenplay" && mediaType === "application/pdf" && file.size > 1_500_000;
         const data = isText
           ? await readFileAsText(file)
           : await readFileAsBase64(file);
@@ -2552,14 +2563,24 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
           isText: isText,
           data: data,
           category: category,
-          uploadedAt: new Date().toISOString()
+          uploadedAt: new Date().toISOString(),
+          skipInAI: skipInAI
         });
+        if (skipInAI) skipped.push(file.name);
       } catch (err) {
         setUploadErr("Failed to read " + file.name);
       }
     }
     if (newFiles.length > 0) {
       setFiles([...files, ...newFiles]);
+    }
+    if (skipped.length > 0) {
+      setUploadErr(
+        "📎 " + skipped.join(", ") + " stored for submission. " +
+        "PDFs over ~100 pages exceed Anthropic's AI reading limit, so this file WON'T be sent to the AI for analysis — " +
+        "but it's safely stored in the app for you to download and submit when the time comes. " +
+        "For AI analysis to read your script, also upload a .txt version (open the PDF, copy all text, paste into a .txt file)."
+      );
     }
   };
 
@@ -3017,7 +3038,7 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
             marginBottom: "16px",
             lineHeight: 1.6
           }}>
-            Upload supporting materials. The AI will analyze these directly when generating your project intelligence report and applications. Max 4MB per file. <strong style={{ color: C.wn }}>PDFs limited to 100 pages</strong> — for longer screenplays, upload as .txt instead.
+            Upload supporting materials. The AI analyzes these directly when generating your project intelligence report and applications. Max 10MB per file. <strong style={{ color: C.ac }}>Screenplay PDFs over ~100 pages</strong> are stored for submission use but won't be sent to the AI — upload a .txt version alongside if you want the AI to read the full script.
           </p>
 
           {FILE_CATEGORIES.map(cat => {
@@ -3083,22 +3104,74 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
                           fontSize: "12px"
                         }}
                       >
-                        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
                           <span style={{ color: C.tx }}>{f.name}</span>
                           <span style={{ color: C.td, fontFamily: FN.m }}>
                             {formatFileSize(f.size)}
                           </span>
+                          {f.skipInAI && (
+                            <span
+                              title="This file is stored for your submission use but not sent to the AI (PDFs over 100 pages exceed the API limit). Upload a .txt version if you want the AI to read the script."
+                              style={{
+                                fontSize: "10px",
+                                color: C.ac,
+                                fontFamily: FN.m,
+                                padding: "2px 6px",
+                                background: C.ac + "15",
+                                border: "1px solid " + C.ac + "40",
+                                borderRadius: "3px"
+                              }}
+                            >📎 submission only</span>
+                          )}
                         </div>
-                        <button
-                          onClick={() => removeFile(f.id)}
-                          style={{
-                            background: "none",
-                            border: "none",
-                            color: C.dn,
-                            cursor: "pointer",
-                            fontSize: "14px"
-                          }}
-                        >×</button>
+                        <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                          <button
+                            onClick={() => {
+                              try {
+                                let blob;
+                                if (f.isText) {
+                                  blob = new Blob([f.data], { type: "text/plain" });
+                                } else {
+                                  const byteStr = atob(f.data);
+                                  const bytes = new Uint8Array(byteStr.length);
+                                  for (let j = 0; j < byteStr.length; j++) bytes[j] = byteStr.charCodeAt(j);
+                                  blob = new Blob([bytes], { type: f.mediaType });
+                                }
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = f.name;
+                                document.body.appendChild(a);
+                                a.click();
+                                document.body.removeChild(a);
+                                URL.revokeObjectURL(url);
+                              } catch (e) {
+                                alert("Download failed: " + (e.message || "unknown error"));
+                              }
+                            }}
+                            title="Download"
+                            style={{
+                              background: "none",
+                              border: "none",
+                              color: C.ac,
+                              cursor: "pointer",
+                              fontSize: "14px",
+                              padding: "0 4px"
+                            }}
+                          >⬇</button>
+                          <button
+                            onClick={() => removeFile(f.id)}
+                            title="Remove"
+                            style={{
+                              background: "none",
+                              border: "none",
+                              color: C.dn,
+                              cursor: "pointer",
+                              fontSize: "14px",
+                              padding: "0 4px"
+                            }}
+                          >×</button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -4484,6 +4557,54 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
             };
             save(updated);
           };
+          const uploadMaterialFile = async (idx, file) => {
+            if (!file) return;
+            if (file.size > 10 * 1024 * 1024) {
+              alert("File is too large (max 10MB). Compress the PDF or reduce image size.");
+              return;
+            }
+            try {
+              const reader = new FileReader();
+              reader.onload = () => {
+                const result = reader.result;
+                // data:application/pdf;base64,XXX → get the base64 part
+                const base64 = result.split(",")[1];
+                updateMaterial(idx, {
+                  uploadedFile: {
+                    name: file.name,
+                    mediaType: file.type || "application/octet-stream",
+                    size: file.size,
+                    data: base64,
+                    uploadedAt: new Date().toISOString()
+                  },
+                  // Auto-mark as received when a file is uploaded
+                  status: "received"
+                });
+              };
+              reader.readAsDataURL(file);
+            } catch (e) {
+              alert("Upload failed: " + (e.message || "unknown error"));
+            }
+          };
+          const downloadMaterialFile = (mat) => {
+            if (!mat.uploadedFile) return;
+            try {
+              const byteStr = atob(mat.uploadedFile.data);
+              const bytes = new Uint8Array(byteStr.length);
+              for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
+              const blob = new Blob([bytes], { type: mat.uploadedFile.mediaType });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = mat.uploadedFile.name;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+            } catch (e) {
+              alert("Download failed: " + (e.message || "unknown error"));
+            }
+          };
           return (
             <Card style={{
               marginBottom: "12px",
@@ -4597,6 +4718,76 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                               onChange={e => updateMaterial(i, { assignedTo: e.target.value })}
                               style={{ fontSize: "11px", padding: "6px" }}
                             />
+                          </div>
+                          <div style={{ marginTop: "10px" }}>
+                            {mat.uploadedFile ? (
+                              <div style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "10px",
+                                padding: "8px 12px",
+                                background: C.ok + "10",
+                                border: "1px solid " + C.ok + "40",
+                                borderRadius: "6px"
+                              }}>
+                                <span style={{ fontSize: "16px" }}>📎</span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <p style={{
+                                    fontSize: "12px",
+                                    color: C.tx,
+                                    fontWeight: 600,
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap"
+                                  }}>{mat.uploadedFile.name}</p>
+                                  <p style={{ fontSize: "10px", color: C.tm, fontFamily: FN.m }}>
+                                    {(mat.uploadedFile.size / 1024).toFixed(0)} KB · uploaded {new Date(mat.uploadedFile.uploadedAt).toLocaleDateString()}
+                                  </p>
+                                </div>
+                                <Btn
+                                  variant="ghost"
+                                  small
+                                  onClick={() => downloadMaterialFile(mat)}
+                                  style={{ color: C.ac }}
+                                >⬇ Download</Btn>
+                                <Btn
+                                  variant="ghost"
+                                  small
+                                  onClick={() => {
+                                    if (confirm("Remove this uploaded file?")) {
+                                      updateMaterial(i, { uploadedFile: null });
+                                    }
+                                  }}
+                                  style={{ color: C.dn }}
+                                >✗</Btn>
+                              </div>
+                            ) : (
+                              <label style={{
+                                display: "inline-block",
+                                cursor: "pointer"
+                              }}>
+                                <span style={{
+                                  display: "inline-block",
+                                  padding: "8px 14px",
+                                  background: "transparent",
+                                  border: "1px dashed " + C.bd,
+                                  borderRadius: "6px",
+                                  color: C.tm,
+                                  fontSize: "11px",
+                                  fontFamily: FN.m,
+                                  cursor: "pointer"
+                                }}>📎 Upload file (max 10MB)</span>
+                                <input
+                                  type="file"
+                                  style={{ display: "none" }}
+                                  onChange={e => {
+                                    const file = e.target.files && e.target.files[0];
+                                    if (file) uploadMaterialFile(i, file);
+                                    e.target.value = "";
+                                  }}
+                                />
+                              </label>
+                            )}
                           </div>
                         </div>
                       </div>
