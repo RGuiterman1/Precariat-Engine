@@ -875,24 +875,95 @@ Find 6-12 real opportunities that STRICTLY match the project's current stage. Qu
       let analysisContext = "";
       if (a) analysisContext = "\nPROJECT INTELLIGENCE:\n" + JSON.stringify(a);
 
-      const textPrompt = `You are a world-class grant writer. Generate a complete, hand-tailored application.
+      const textPrompt = `You are a world-class grant writer and application strategist who has helped films win Sundance, Tribeca, Cinereach, SFFILM, Sundance Institute labs, and dozens of major grants. Your success rate is extraordinary because you NEVER write generic applications — every single submission is meticulously tailored to the specific opportunity's values, voice, aesthetic preferences, selection criteria, and the unique things their committees respond to.
 
-OPPORTUNITY: ${o.name} | ${o.organization} | ${o.type} | ${o.description}
-COMPANY: ${prof.companyName} | ${prof.founders} | ${prof.location} | ${prof.bio} | ${prof.credits}
-PROJECT: "${p.title}" | ${p.format} | ${p.genre || "?"} | ${p.stage} | ${p.logline || "?"} | ${p.synopsis || "?"} | ${p.themes || "?"}${analysisContext}
+═══════════════════════════════════════════════════════════
+YOUR TASK: Write a hand-tailored application for a SPECIFIC opportunity.
+═══════════════════════════════════════════════════════════
 
-${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review the attached files (screenplay, pitch deck, etc.) and reference specific content from them in the application." : ""}
+OPPORTUNITY DETAILS
+• Name: ${o.name}
+• Organization: ${o.organization}
+• Type: ${o.type}
+• Description: ${o.description}
+• Eligibility: ${o.eligibility || "Unknown"}
+• URL: ${o.url || "N/A"}
 
-Respond ONLY with JSON (no markdown):
+APPLICANT
+• Company: ${prof.companyName}
+• Founders: ${prof.founders}
+• Location: ${prof.location}
+• Bio: ${prof.bio}
+• Credits: ${prof.credits}
+• Specialties: ${prof.specialties}
+
+PROJECT
+• Title: "${p.title}"
+• Format: ${p.format}
+• Genre: ${p.genre || "?"}
+• Stage: ${p.stage}
+• Logline: ${p.logline || "?"}
+• Synopsis: ${p.synopsis || "?"}
+• Themes: ${p.themes || "?"}
+• Budget: ${p.budget || "?"}
+• Team Notes: ${p.teamNotes || "?"}${analysisContext}
+
+${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review the attached files (screenplay, pitch deck, look book, etc.) carefully. Reference SPECIFIC scenes, visuals, characters, or moments from them — not vague summaries. This specificity is what separates winning applications from generic ones." : ""}
+
+═══════════════════════════════════════════════════════════
+STEP 1 — RESEARCH THE OPPORTUNITY (REQUIRED, NON-NEGOTIABLE)
+═══════════════════════════════════════════════════════════
+Before writing a single word of the application, you MUST use web search to research "${o.name}" at "${o.organization}". Specifically find:
+
+1. Their mission statement, values, and what they explicitly say they're looking for
+2. Past recipients/winners/selected projects — patterns in what they choose
+3. The aesthetic, political, thematic, or formal sensibilities they favor
+4. The tone and language of their OWN communication (read their website, application guidelines, interviews with program directors)
+5. Any specific framings, buzzwords, or priorities that recur in their materials
+6. Selection criteria — what do judges/committees explicitly score on?
+7. Any red flags or common reasons applications fail
+
+Search broadly. Read multiple pages. Do NOT skip this step.
+
+═══════════════════════════════════════════════════════════
+STEP 2 — WRITE THE APPLICATION
+═══════════════════════════════════════════════════════════
+Armed with your research, write each section with these mandates:
+
+▸ **TONE MATCHING**: The voice must match how this specific organization communicates. If they're academic and critical, be academic and critical. If they're activist and urgent, be activist and urgent. If they're literary and meditative, be literary and meditative. If they're industry-insider and commercial, be industry-insider and commercial. Match their register exactly.
+
+▸ **LANGUAGE MIRRORING**: Echo the specific vocabulary and framings the organization uses. If they say "underrepresented voices," use that framing. If they emphasize "craft" or "vision" or "formal innovation" — make those words present.
+
+▸ **EMPHASIS CALIBRATION**: Different opportunities care about different things. A commercial market lab cares about distribution angles and audience — lead with that. A formally adventurous grant cares about aesthetic risk and artistic lineage — lead with that. A social impact fund cares about community, access, and representation — lead with that. CHOOSE what to emphasize based on your research, not a template.
+
+▸ **SPECIFICITY OVER GENERIC GRANT-SPEAK**: Every sentence must be specific to this project AND this opportunity. No generic phrases like "compelling story" or "diverse perspectives." Instead: name specific scenes, specific influences, specific craft decisions, specific reasons THIS project is right for THIS opportunity.
+
+▸ **ANSWER "WHY THIS, WHY HERE"**: Every section must implicitly or explicitly answer: "Why is THIS specific project right for THIS specific opportunity?" not just "Why is this project worthy of support?"
+
+▸ **USE ATTACHED MATERIALS**: If there's a screenplay, quote or reference specific scenes. If there's a pitch deck, reference its visual language. If there's a look book, describe its aesthetic identity. Do not write as if you haven't read the materials.
+
+═══════════════════════════════════════════════════════════
+OUTPUT FORMAT (JSON only, no markdown, no backticks)
+═══════════════════════════════════════════════════════════
 {
-  "projectStatement": "2-3 para",
-  "artistStatement": "1-2 para",
-  "budgetJustification": "...",
-  "impactStatement": "...",
-  "timeline": "...",
-  "coverLetter": "...",
-  "strategicNotes": "internal notes only"
-}`;
+  "research": {
+    "orgMission": "1-2 sentences on what this organization stands for based on your research",
+    "aestheticPrefs": "1-2 sentences on the kinds of projects they historically support",
+    "toneVoice": "1-2 sentences describing how the organization itself communicates (formal/activist/literary/commercial/etc.)",
+    "keyCriteria": "The top 3-5 things their selection committee likely weighs most heavily, as a bullet list",
+    "strategicInsight": "The single most important insight that shaped how this application was written"
+  },
+  "toneStrategy": "2-3 sentences explaining the voice/register/emphasis chosen for this application and WHY it matches this specific opportunity",
+  "coverLetter": "Full cover letter, tailored to the tone of this org. Should open with a hook that makes the reader lean in, then state the ask clearly, then give reasons rooted in what THIS org values.",
+  "projectStatement": "2-3 paragraphs. The heart of the application — what the project is, what it's doing artistically, why it matters. Calibrated to what this org cares about.",
+  "artistStatement": "1-2 paragraphs. Director/creator voice, personal stakes, artistic lineage, why YOU are the right person to make this. Match the tone of artist statements the org has historically responded to.",
+  "budgetJustification": "How the money will be used and why it's necessary at this stage. Be concrete.",
+  "impactStatement": "Why this project matters beyond itself. Frame impact in terms THIS org cares about (community? art form? industry? social change? aesthetics?).",
+  "timeline": "Clear, realistic production/development timeline showing the project will actually happen.",
+  "strategicNotes": "INTERNAL ONLY — not for the application itself. Write 3-5 bullet points for the applicant (Ryan) explaining: what angle you chose and why, what you deliberately emphasized or downplayed, any risks or weak spots in the application, and suggestions for what to personalize or supplement before submitting."
+}
+
+No generic language. No boilerplate. Every word must earn its place. Make this application so specific that it could not have been written for any other opportunity.`;
 
       let messageContent;
       if (projectFiles.length > 0) {
@@ -917,7 +988,7 @@ Respond ONLY with JSON (no markdown):
         messageContent = textPrompt;
       }
 
-      const txt = await askClaude(messageContent);
+      const txt = await askClaude(messageContent, true);
       const parsed = extractJSON(txt);
       if (parsed) {
         const cost = parseFee(o.submissionFee);
@@ -930,6 +1001,7 @@ Respond ONLY with JSON (no markdown):
           projTitle: p.title,
           hadAnalysis: !!a,
           hadFiles: projectFiles.length > 0,
+          deepResearch: true,
           status: "draft",
           cost: cost,
           feeLabel: o.submissionFee || "?",
@@ -981,54 +1053,121 @@ Respond ONLY with JSON (no markdown):
 
       let textPrompt;
       if (mode === "regenerate") {
-        textPrompt = `You are a world-class grant writer. Generate a complete, hand-tailored application using the latest project intelligence.
+        textPrompt = `You are a world-class grant writer and application strategist. Your success rate is extraordinary because you NEVER write generic applications — every submission is meticulously tailored to the specific opportunity's values, voice, aesthetic, and selection criteria.
 
-OPPORTUNITY: ${app.oppName} | ${app.oppOrg}${o ? " | " + o.type + " | " + o.description : ""}
-COMPANY: ${prof.companyName} | ${prof.founders} | ${prof.location} | ${prof.bio} | ${prof.credits}
-PROJECT: "${p.title}" | ${p.format} | ${p.genre || "?"} | ${p.stage} | ${p.logline || "?"} | ${p.synopsis || "?"} | ${p.themes || "?"} | Team: ${p.teamNotes || "?"}${analysisContext}
+═══════════════════════════════════════════════════════════
+TASK: REGENERATE a hand-tailored application from scratch using the LATEST project intelligence.
+═══════════════════════════════════════════════════════════
 
-${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review the attached files and reference specific content from them." : ""}
+OPPORTUNITY DETAILS
+• Name: ${app.oppName}
+• Organization: ${app.oppOrg}
+${o ? "• Type: " + o.type + "\n• Description: " + o.description + "\n• Eligibility: " + (o.eligibility || "Unknown") + "\n• URL: " + (o.url || "N/A") : ""}
+
+APPLICANT
+• Company: ${prof.companyName}
+• Founders: ${prof.founders}
+• Location: ${prof.location}
+• Bio: ${prof.bio}
+• Credits: ${prof.credits}
+• Specialties: ${prof.specialties}
+
+PROJECT
+• Title: "${p.title}"
+• Format: ${p.format}
+• Genre: ${p.genre || "?"}
+• Stage: ${p.stage}
+• Logline: ${p.logline || "?"}
+• Synopsis: ${p.synopsis || "?"}
+• Themes: ${p.themes || "?"}
+• Budget: ${p.budget || "?"}
+• Team Notes: ${p.teamNotes || "?"}${analysisContext}
+
+${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review carefully and reference specific scenes, visuals, characters, or moments from them — not vague summaries." : ""}
+
+STEP 1 — RESEARCH (REQUIRED): Use web search to research "${app.oppName}" at "${app.oppOrg}". Find their mission, past recipients, aesthetic preferences, tone, and selection criteria. Read their own communication to understand their register.
+
+STEP 2 — WRITE: Every section must match the org's voice, use their vocabulary, emphasize what they care about, and answer "why THIS project for THIS opportunity." No generic grant-speak.
 
 Respond ONLY with JSON (no markdown):
 {
+  "research": {
+    "orgMission": "1-2 sentences on what this org stands for",
+    "aestheticPrefs": "1-2 sentences on what they historically support",
+    "toneVoice": "1-2 sentences on how the org communicates",
+    "keyCriteria": "Top 3-5 things their committee weighs, as bullets",
+    "strategicInsight": "The single most important insight shaping this application"
+  },
+  "toneStrategy": "2-3 sentences on the voice/emphasis chosen for this app and WHY it matches this opportunity",
+  "coverLetter": "...",
   "projectStatement": "2-3 para",
   "artistStatement": "1-2 para",
   "budgetJustification": "...",
   "impactStatement": "...",
   "timeline": "...",
-  "coverLetter": "...",
-  "strategicNotes": "internal notes only"
+  "strategicNotes": "Internal bullet points for the applicant: angle chosen, what was emphasized, risks, suggestions for personalization."
 }`;
       } else {
         // Augment mode: surgical update preserving tone and user edits
-        textPrompt = `You are a world-class grant writer reviewing an existing application draft against UPDATED project intelligence. The team has new information (perhaps a new collaborator attached, updated budget, revised script, new credits, etc.) and needs to know if the application should be updated.
+        textPrompt = `You are a world-class grant writer reviewing an existing application draft against UPDATED project intelligence. The team has new information (new collaborator attached, updated budget, revised script, new credits, etc.). You must decide what — if anything — in the application should be updated.
 
-OPPORTUNITY: ${app.oppName} | ${app.oppOrg}${o ? " | " + o.type : ""}
-COMPANY: ${prof.companyName} | ${prof.founders} | ${prof.location} | ${prof.bio} | ${prof.credits}
-PROJECT: "${p.title}" | ${p.format} | ${p.genre || "?"} | ${p.stage} | ${p.logline || "?"} | ${p.synopsis || "?"} | Team Notes: ${p.teamNotes || "?"}${analysisContext}
+═══════════════════════════════════════════════════════════
+OPPORTUNITY
+═══════════════════════════════════════════════════════════
+• Name: ${app.oppName}
+• Organization: ${app.oppOrg}
+${o ? "• Type: " + o.type + "\n• Description: " + o.description : ""}
+
+APPLICANT
+• Company: ${prof.companyName} | ${prof.founders} | ${prof.location}
+• Bio: ${prof.bio}
+• Credits: ${prof.credits}
+
+PROJECT (LATEST VERSION)
+• Title: "${p.title}"
+• Format: ${p.format} · Genre: ${p.genre || "?"} · Stage: ${p.stage}
+• Logline: ${p.logline || "?"}
+• Synopsis: ${p.synopsis || "?"}
+• Themes: ${p.themes || "?"}
+• Team Notes: ${p.teamNotes || "?"}${analysisContext}
 
 EXISTING APPLICATION DRAFT:
 ${JSON.stringify(app.content, null, 2)}
 
-${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review the attached files for current details." : ""}
+${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review for current details." : ""}
 
-CRITICAL INSTRUCTIONS:
-1. Review each section. If the new intelligence/info genuinely strengthens a section, return an updated version.
-2. If a section is already strong and the new info doesn't meaningfully improve it, return the EXACT original text unchanged — preserve the writer's voice and any manual edits.
-3. Integrate new information naturally (new producer credits, new themes from fresh analysis, updated strategic positioning). Don't force changes.
-4. Preserve the overall structure and any specific phrasing that works.
-5. Add a "changesSummary" field listing what you changed and why (brief bullet points).
+═══════════════════════════════════════════════════════════
+REFRESH RESEARCH (REQUIRED)
+═══════════════════════════════════════════════════════════
+Use web search to re-verify your understanding of "${app.oppName}" at "${app.oppOrg}" — have their criteria or focus shifted? Is there anything new about the org that would affect this application? Read their current materials.
+
+═══════════════════════════════════════════════════════════
+CRITICAL AUGMENTATION RULES
+═══════════════════════════════════════════════════════════
+1. Preserve the writer's voice and any manual edits. Only change sections when the new info GENUINELY strengthens them.
+2. If a section is already strong and the new info doesn't meaningfully improve it, return the EXACT original text unchanged.
+3. Integrate new information naturally (new producer credits, new themes from fresh analysis). Don't force changes.
+4. Preserve any phrasing that works well for this opportunity's tone.
+5. If the opportunity's focus has evolved per your research, note it and adjust sparingly.
 
 Respond ONLY with JSON (no markdown):
 {
+  "research": {
+    "orgMission": "Updated understanding of the org's mission",
+    "aestheticPrefs": "What they support",
+    "toneVoice": "How they communicate",
+    "keyCriteria": "Top 3-5 committee priorities",
+    "strategicInsight": "Key insight that guided this refresh"
+  },
+  "toneStrategy": "Brief statement of how the voice is calibrated",
+  "coverLetter": "...",
   "projectStatement": "...",
   "artistStatement": "...",
   "budgetJustification": "...",
   "impactStatement": "...",
   "timeline": "...",
-  "coverLetter": "...",
   "strategicNotes": "...",
-  "changesSummary": "Brief bullet points of what was updated, or 'No meaningful changes needed' if the draft already incorporates the latest intelligence well."
+  "changesSummary": "Brief bullet points: what was updated and why, or 'No meaningful changes needed' if the draft already incorporates the latest intelligence well."
 }`;
       }
 
@@ -1055,7 +1194,7 @@ Respond ONLY with JSON (no markdown):
         messageContent = textPrompt;
       }
 
-      const txt = await askClaude(messageContent);
+      const txt = await askClaude(messageContent, true);
       const parsed = extractJSON(txt);
 
       if (parsed) {
@@ -1063,14 +1202,14 @@ Respond ONLY with JSON (no markdown):
         const updatedApps = currentApps.map(a => {
           if (a.id !== appId) return a;
           const newContent = { ...a.content };
-          // Copy over any fields that came back
-          ["projectStatement", "artistStatement", "budgetJustification", "impactStatement", "timeline", "coverLetter", "strategicNotes"].forEach(k => {
+          // Copy over any fields that came back, including research + toneStrategy
+          ["projectStatement", "artistStatement", "budgetJustification", "impactStatement", "timeline", "coverLetter", "strategicNotes", "research", "toneStrategy"].forEach(k => {
             if (parsed[k]) newContent[k] = parsed[k];
           });
           return {
             ...a,
             content: newContent,
-            hadAnalysis: !!a,
+            deepResearch: true,
             refreshedAt: new Date().toISOString(),
             refreshMode: mode,
             changesSummary: parsed.changesSummary || null,
@@ -2994,6 +3133,7 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
               {app.projTitle} · {new Date(app.createdAt).toLocaleDateString()}
               {app.hadAnalysis ? " · 🔬" : ""}
               {app.hadFiles ? " · 📎" : ""}
+              {app.deepResearch ? " · 🔍" : ""}
               {app.editedAt ? " · ✎ edited " + new Date(app.editedAt).toLocaleDateString() : ""}
               {app.refreshedAt ? " · 🔄 refreshed " + new Date(app.refreshedAt).toLocaleDateString() : ""}
             </p>
@@ -3104,6 +3244,63 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
               whiteSpace: "pre-wrap",
               color: C.tx
             }}>{app.changesSummary}</p>
+          </Card>
+        )}
+
+        {c.research && (
+          <Card style={{
+            marginBottom: "12px",
+            borderColor: C.pp + "30",
+            background: C.pp + "06"
+          }}>
+            <h3 style={{
+              fontFamily: FN.d,
+              fontSize: "18px",
+              fontStyle: "italic",
+              marginBottom: "4px",
+              color: C.pp
+            }}>🔍 Opportunity Research</h3>
+            <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "16px" }}>
+              What the AI learned about this opportunity before writing
+            </p>
+            {c.research.orgMission && (
+              <InfoBlock label="Organization Mission" content={c.research.orgMission} color={C.pp} />
+            )}
+            {c.research.aestheticPrefs && (
+              <InfoBlock label="Aesthetic Preferences" content={c.research.aestheticPrefs} color={C.pp} />
+            )}
+            {c.research.toneVoice && (
+              <InfoBlock label="Their Voice & Tone" content={c.research.toneVoice} color={C.pp} />
+            )}
+            {c.research.keyCriteria && (
+              <InfoBlock label="Key Selection Criteria" content={c.research.keyCriteria} color={C.pp} />
+            )}
+            {c.research.strategicInsight && (
+              <InfoBlock label="Strategic Insight" content={c.research.strategicInsight} color={C.pp} />
+            )}
+          </Card>
+        )}
+
+        {c.toneStrategy && (
+          <Card style={{
+            marginBottom: "12px",
+            borderColor: C.tl + "30",
+            background: C.tl + "06"
+          }}>
+            <p style={{
+              fontFamily: FN.m,
+              fontSize: "11px",
+              color: C.tl,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              marginBottom: "8px"
+            }}>🎯 Tone Strategy</p>
+            <p style={{
+              fontSize: "13px",
+              lineHeight: 1.6,
+              whiteSpace: "pre-wrap",
+              color: C.tx
+            }}>{c.toneStrategy}</p>
           </Card>
         )}
 
@@ -3582,7 +3779,7 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
         >◆ Generate</Btn>
         {busy && (
           <p style={{ color: C.tl, fontSize: "12px", marginTop: "10px" }}>
-            ⏳ {generateJobs.filter(j => j.status === "running").length} generation(s) running in background. You can keep working.
+            ⏳ {generateJobs.filter(j => j.status === "running").length} application{generateJobs.filter(j => j.status === "running").length === 1 ? "" : "s"} being researched and written in background (2-4 min each). You can keep working.
           </p>
         )}
         {errJobs.map(j => (
@@ -3731,6 +3928,7 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
                     }}>{app.oppName}</h3>
                     {app.hadAnalysis && <span>🔬</span>}
                     {app.hadFiles && <span>📎</span>}
+                    {app.deepResearch && <span title="Deep opportunity research">🔍</span>}
                     {isStale(app) && <Bdg color={C.wn}>STALE</Bdg>}
                     {app.cost > 0 ? (
                       <span style={{
