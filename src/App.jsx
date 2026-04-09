@@ -920,6 +920,148 @@ Respond ONLY with JSON (no markdown):
     }
   };
 
+  // Background: Refresh an existing application with updated analysis
+  // mode: "augment" preserves user edits, only updates sections that benefit from new intelligence
+  // mode: "regenerate" creates a completely fresh draft replacing the existing content
+  const runRefreshApp = async (appId, mode) => {
+    const app = appsRef.current.find(a => a.id === appId);
+    if (!app || app.status === "submitted") return;
+
+    const allProjects = projectsRef.current;
+    const p = allProjects.find(x => x.title === app.projTitle) || allProjects[0];
+    if (!p) return;
+
+    const jobId = "refresh-" + appId + "-" + Date.now();
+    addJob({
+      id: jobId,
+      kind: "refresh",
+      status: "running",
+      label: (mode === "regenerate" ? "Regenerating: " : "Refreshing: ") + app.oppName,
+      meta: { appId, mode }
+    });
+
+    try {
+      const a = p.analysis;
+      const projectFiles = await loadProjectFiles(p.id);
+      const prof = profileRef.current;
+      const o = oppsRef.current.find(x => x.name === app.oppName && x.organization === app.oppOrg);
+
+      let analysisContext = "";
+      if (a) analysisContext = "\nUPDATED PROJECT INTELLIGENCE:\n" + JSON.stringify(a);
+
+      let textPrompt;
+      if (mode === "regenerate") {
+        textPrompt = `You are a world-class grant writer. Generate a complete, hand-tailored application using the latest project intelligence.
+
+OPPORTUNITY: ${app.oppName} | ${app.oppOrg}${o ? " | " + o.type + " | " + o.description : ""}
+COMPANY: ${prof.companyName} | ${prof.founders} | ${prof.location} | ${prof.bio} | ${prof.credits}
+PROJECT: "${p.title}" | ${p.format} | ${p.genre || "?"} | ${p.stage} | ${p.logline || "?"} | ${p.synopsis || "?"} | ${p.themes || "?"} | Team: ${p.teamNotes || "?"}${analysisContext}
+
+${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review the attached files and reference specific content from them." : ""}
+
+Respond ONLY with JSON (no markdown):
+{
+  "projectStatement": "2-3 para",
+  "artistStatement": "1-2 para",
+  "budgetJustification": "...",
+  "impactStatement": "...",
+  "timeline": "...",
+  "coverLetter": "...",
+  "strategicNotes": "internal notes only"
+}`;
+      } else {
+        // Augment mode: surgical update preserving tone and user edits
+        textPrompt = `You are a world-class grant writer reviewing an existing application draft against UPDATED project intelligence. The team has new information (perhaps a new collaborator attached, updated budget, revised script, new credits, etc.) and needs to know if the application should be updated.
+
+OPPORTUNITY: ${app.oppName} | ${app.oppOrg}${o ? " | " + o.type : ""}
+COMPANY: ${prof.companyName} | ${prof.founders} | ${prof.location} | ${prof.bio} | ${prof.credits}
+PROJECT: "${p.title}" | ${p.format} | ${p.genre || "?"} | ${p.stage} | ${p.logline || "?"} | ${p.synopsis || "?"} | Team Notes: ${p.teamNotes || "?"}${analysisContext}
+
+EXISTING APPLICATION DRAFT:
+${JSON.stringify(app.content, null, 2)}
+
+${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review the attached files for current details." : ""}
+
+CRITICAL INSTRUCTIONS:
+1. Review each section. If the new intelligence/info genuinely strengthens a section, return an updated version.
+2. If a section is already strong and the new info doesn't meaningfully improve it, return the EXACT original text unchanged — preserve the writer's voice and any manual edits.
+3. Integrate new information naturally (new producer credits, new themes from fresh analysis, updated strategic positioning). Don't force changes.
+4. Preserve the overall structure and any specific phrasing that works.
+5. Add a "changesSummary" field listing what you changed and why (brief bullet points).
+
+Respond ONLY with JSON (no markdown):
+{
+  "projectStatement": "...",
+  "artistStatement": "...",
+  "budgetJustification": "...",
+  "impactStatement": "...",
+  "timeline": "...",
+  "coverLetter": "...",
+  "strategicNotes": "...",
+  "changesSummary": "Brief bullet points of what was updated, or 'No meaningful changes needed' if the draft already incorporates the latest intelligence well."
+}`;
+      }
+
+      let messageContent;
+      if (projectFiles.length > 0) {
+        const blocks = [{ type: "text", text: textPrompt }];
+        for (const f of projectFiles) {
+          if (f.isText) {
+            blocks.push({ type: "text", text: "\n--- " + f.name + " ---\n" + f.data });
+          } else if (f.mediaType === "application/pdf") {
+            blocks.push({
+              type: "document",
+              source: { type: "base64", media_type: "application/pdf", data: f.data }
+            });
+          } else if (f.mediaType.startsWith("image/")) {
+            blocks.push({
+              type: "image",
+              source: { type: "base64", media_type: f.mediaType, data: f.data }
+            });
+          }
+        }
+        messageContent = blocks;
+      } else {
+        messageContent = textPrompt;
+      }
+
+      const txt = await askClaude(messageContent);
+      const parsed = extractJSON(txt);
+
+      if (parsed) {
+        const currentApps = appsRef.current;
+        const updatedApps = currentApps.map(a => {
+          if (a.id !== appId) return a;
+          const newContent = { ...a.content };
+          // Copy over any fields that came back
+          ["projectStatement", "artistStatement", "budgetJustification", "impactStatement", "timeline", "coverLetter", "strategicNotes"].forEach(k => {
+            if (parsed[k]) newContent[k] = parsed[k];
+          });
+          return {
+            ...a,
+            content: newContent,
+            hadAnalysis: !!a,
+            refreshedAt: new Date().toISOString(),
+            refreshMode: mode,
+            changesSummary: parsed.changesSummary || null,
+            // Dropping an approved/reviewed app back to draft because content changed
+            status: a.status === "approved" ? "draft" : a.status,
+            checks: a.status === "approved"
+              ? { content: false, cost: false, ready: false }
+              : a.checks
+          };
+        });
+        sApps(updatedApps);
+        removeJob(jobId);
+      } else {
+        updateJob(jobId, { status: "error", error: "Parse failed" });
+      }
+    } catch (e) {
+      console.error("Refresh error:", e);
+      updateJob(jobId, { status: "error", error: e.message || "Refresh failed" });
+    }
+  };
+
   if (!ready) {
     return (
       <div style={{
@@ -1160,6 +1302,8 @@ Respond ONLY with JSON (no markdown):
             jobs={jobs}
             runAnalyze={runAnalyze}
             dismissJob={dismissJob}
+            apps={apps}
+            runRefreshApp={runRefreshApp}
           />
         )}
         {tab === "disc" && (
@@ -1202,6 +1346,7 @@ Respond ONLY with JSON (no markdown):
             jobs={jobs}
             runGenerate={runGenerate}
             dismissJob={dismissJob}
+            runRefreshApp={runRefreshApp}
           />
         )}
         {tab === "pay" && (
@@ -1406,7 +1551,7 @@ function DashView({ profile, projects, apps, pay, go, spent, deadlines }) {
    PROJECTS (with file upload)
    ═══════════════════════════════════════════════════ */
 
-function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob }) {
+function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps, runRefreshApp }) {
   const [edit, setEdit] = useState(null);
   const [viewAn, setViewAn] = useState(null);
   const [uploadErr, setUploadErr] = useState("");
@@ -1549,6 +1694,57 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob }) {
         </div>
 
         {isAnalyzing(p.id) && <Loader text="Running deep analysis with your uploaded materials..." />}
+
+        {(() => {
+          if (!a || !apps) return null;
+          const staleForThis = apps.filter(ap => {
+            if (ap.status === "submitted") return false;
+            if (ap.projTitle !== p.title) return false;
+            if (!a.analyzedAt) return false;
+            const analyzedAt = new Date(a.analyzedAt).getTime();
+            const appUpdatedAt = new Date(ap.refreshedAt || ap.createdAt).getTime();
+            return analyzedAt > appUpdatedAt;
+          });
+          if (staleForThis.length === 0) return null;
+          return (
+            <Card style={{
+              marginBottom: "16px",
+              borderColor: C.wn + "50",
+              background: C.wn + "08"
+            }}>
+              <div style={{
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: "16px",
+                flexWrap: "wrap"
+              }}>
+                <div style={{ flex: 1, minWidth: "240px" }}>
+                  <p style={{ fontSize: "14px", fontWeight: 600, marginBottom: "6px" }}>
+                    🔄 {staleForThis.length} application{staleForThis.length > 1 ? "s" : ""} can be refreshed
+                  </p>
+                  <p style={{ fontSize: "12px", color: C.tm, lineHeight: 1.5, marginBottom: "10px" }}>
+                    These drafts were created before the latest analysis. You can refresh them individually from the Applications tab, or augment them all now with the new intelligence.
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                    {staleForThis.map(ap => (
+                      <p key={ap.id} style={{ fontSize: "12px", color: C.tx }}>
+                        • {ap.oppName} <span style={{ color: C.tm }}>({ap.status})</span>
+                      </p>
+                    ))}
+                  </div>
+                </div>
+                <Btn
+                  variant="teal"
+                  small
+                  onClick={() => {
+                    staleForThis.forEach(ap => runRefreshApp(ap.id, "augment"));
+                  }}
+                >✨ Augment All</Btn>
+              </div>
+            </Card>
+          );
+        })()}
 
         {!a && !isAnalyzing(p.id) && (
           <Blank
@@ -2607,7 +2803,7 @@ function DeadView({ deadlines, opps, save, go }) {
    APPLICATIONS
    ═══════════════════════════════════════════════════ */
 
-function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate, dismissJob }) {
+function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate, dismissJob, runRefreshApp }) {
   const [selO, setSelO] = useState(null);
   const [selP, setSelP] = useState(0);
   const [view, setView] = useState(null);
@@ -2616,11 +2812,25 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
   const [submitMdl, setSubmitMdl] = useState(null);
   const [editingKey, setEditingKey] = useState(null);
   const [draftText, setDraftText] = useState("");
+  const [refreshMdl, setRefreshMdl] = useState(null);
 
   // Derive busy + errors from global jobs
   const generateJobs = jobs.filter(j => j.kind === "generate");
+  const refreshJobs = jobs.filter(j => j.kind === "refresh");
   const busy = generateJobs.some(j => j.status === "running");
   const errJobs = generateJobs.filter(j => j.status === "error");
+  const refreshErrJobs = refreshJobs.filter(j => j.status === "error");
+  const isRefreshing = (appId) => refreshJobs.some(j => j.meta && j.meta.appId === appId && j.status === "running");
+
+  // An app is "stale" if its project has been analyzed more recently than the app was created or last refreshed
+  const isStale = (app) => {
+    if (app.status === "submitted") return false;
+    const p = projects.find(x => x.title === app.projTitle);
+    if (!p || !p.analysis || !p.analysis.analyzedAt) return false;
+    const analyzedAt = new Date(p.analysis.analyzedAt).getTime();
+    const appUpdatedAt = new Date(app.refreshedAt || app.createdAt).getTime();
+    return analyzedAt > appUpdatedAt;
+  };
 
   const generate = () => {
     if (selO === null || !projects[selP]) return;
@@ -2726,8 +2936,10 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
               {app.hadAnalysis ? " · 🔬" : ""}
               {app.hadFiles ? " · 📎" : ""}
               {app.editedAt ? " · ✎ edited " + new Date(app.editedAt).toLocaleDateString() : ""}
+              {app.refreshedAt ? " · 🔄 refreshed " + new Date(app.refreshedAt).toLocaleDateString() : ""}
             </p>
           </div>
+          {isStale(app) && <Bdg color={C.wn}>STALE</Bdg>}
           <Bdg color={sc[app.status]}>{app.status}</Bdg>
         </div>
 
@@ -2781,6 +2993,60 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
             </div>
           </div>
         </Card>
+
+        {isStale(app) && (
+          <Card style={{
+            marginBottom: "12px",
+            borderColor: C.wn + "50",
+            background: C.wn + "08"
+          }}>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "16px",
+              flexWrap: "wrap"
+            }}>
+              <div style={{ flex: 1, minWidth: "240px" }}>
+                <p style={{ fontSize: "14px", fontWeight: 600, marginBottom: "4px" }}>
+                  ⚠ Stale — project has been re-analyzed
+                </p>
+                <p style={{ fontSize: "12px", color: C.tm, lineHeight: 1.5 }}>
+                  The project intelligence has been updated since this application was created. You can refresh the draft to incorporate the new information.
+                </p>
+              </div>
+              <Btn
+                variant="teal"
+                small
+                onClick={() => setRefreshMdl(view)}
+                disabled={isRefreshing(app.id)}
+              >{isRefreshing(app.id) ? "🔄 Refreshing..." : "🔄 Refresh"}</Btn>
+            </div>
+          </Card>
+        )}
+
+        {app.changesSummary && (
+          <Card style={{
+            marginBottom: "12px",
+            borderColor: C.tl + "40",
+            background: C.tl + "06"
+          }}>
+            <p style={{
+              fontFamily: FN.m,
+              fontSize: "11px",
+              color: C.tl,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              marginBottom: "8px"
+            }}>🔄 Last Refresh ({app.refreshMode || "augment"})</p>
+            <p style={{
+              fontSize: "13px",
+              lineHeight: 1.6,
+              whiteSpace: "pre-wrap",
+              color: C.tx
+            }}>{app.changesSummary}</p>
+          </Card>
+        )}
 
         {sections.map((s, i) => {
           const isEditing = editingKey === s.k;
@@ -3121,6 +3387,83 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
             </div>
           )}
         </Mdl>
+
+        <Mdl
+          open={refreshMdl !== null}
+          onClose={() => setRefreshMdl(null)}
+          title="Refresh Application"
+          width="520px"
+        >
+          {refreshMdl !== null && apps[refreshMdl] && (
+            <div>
+              <p style={{ fontSize: "13px", color: C.tm, lineHeight: 1.6, marginBottom: "16px" }}>
+                The latest project analysis for <strong style={{ color: C.tx }}>{apps[refreshMdl].projTitle}</strong> will be used to update this draft. Choose how:
+              </p>
+
+              <div
+                onClick={() => {
+                  runRefreshApp(apps[refreshMdl].id, "augment");
+                  setRefreshMdl(null);
+                }}
+                style={{
+                  background: C.bg,
+                  border: "1px solid " + C.tl + "40",
+                  borderRadius: "8px",
+                  padding: "16px",
+                  marginBottom: "10px",
+                  cursor: "pointer",
+                  transition: "border-color 0.15s"
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                  <span style={{ fontSize: "18px" }}>✨</span>
+                  <h4 style={{ fontFamily: FN.d, fontSize: "17px", fontStyle: "italic", color: C.tl }}>
+                    Augment (Recommended)
+                  </h4>
+                </div>
+                <p style={{ fontSize: "12px", color: C.tm, lineHeight: 1.5, marginLeft: "28px" }}>
+                  Surgical updates only. Preserves your voice, manual edits, and sections that already work. The AI will integrate new information (new collaborator, updated credits, fresh analysis) only where it meaningfully strengthens the draft, and return a summary of what changed.
+                </p>
+              </div>
+
+              <div
+                onClick={() => {
+                  runRefreshApp(apps[refreshMdl].id, "regenerate");
+                  setRefreshMdl(null);
+                }}
+                style={{
+                  background: C.bg,
+                  border: "1px solid " + C.wn + "40",
+                  borderRadius: "8px",
+                  padding: "16px",
+                  marginBottom: "16px",
+                  cursor: "pointer",
+                  transition: "border-color 0.15s"
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                  <span style={{ fontSize: "18px" }}>🔄</span>
+                  <h4 style={{ fontFamily: FN.d, fontSize: "17px", fontStyle: "italic", color: C.wn }}>
+                    Regenerate Fresh
+                  </h4>
+                </div>
+                <p style={{ fontSize: "12px", color: C.tm, lineHeight: 1.5, marginLeft: "28px" }}>
+                  Completely rewrite the entire application from scratch using the latest analysis. <strong style={{ color: C.wn }}>Any manual edits you made will be lost.</strong> Use this if the project has changed dramatically or you want a totally new angle.
+                </p>
+              </div>
+
+              {apps[refreshMdl].status === "approved" && (
+                <p style={{ fontSize: "11px", color: C.wn, marginBottom: "12px" }}>
+                  ⚠ This application is currently approved. Refreshing will revert it to draft status.
+                </p>
+              )}
+
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <Btn variant="secondary" onClick={() => setRefreshMdl(null)}>Cancel</Btn>
+              </div>
+            </div>
+          )}
+        </Mdl>
       </div>
     );
   }
@@ -3230,6 +3573,7 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
                     }}>{app.oppName}</h3>
                     {app.hadAnalysis && <span>🔬</span>}
                     {app.hadFiles && <span>📎</span>}
+                    {isStale(app) && <Bdg color={C.wn}>STALE</Bdg>}
                     {app.cost > 0 ? (
                       <span style={{
                         fontFamily: FN.m,
