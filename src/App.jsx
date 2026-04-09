@@ -422,6 +422,29 @@ function urgency(days) {
   return { label: days + "d", color: C.td };
 }
 
+function parseFee(fee) {
+  if (!fee || typeof fee !== "string") return 0;
+  const s = fee.toLowerCase().trim();
+  if (s === "free" || s === "$0" || s === "0" || s === "n/a" || s === "none" || s === "waived") return 0;
+  const matches = s.match(/\d+(?:\.\d+)?/g);
+  if (!matches || matches.length === 0) return 0;
+  const nums = matches.map(n => parseFloat(n)).filter(n => !isNaN(n));
+  if (nums.length === 0) return 0;
+  // For ranges like "$65-$85", return the MAX for safety (so spending limit gates catch it)
+  const max = Math.max(...nums);
+  // Sanity cap: no submission fee should exceed $10,000
+  if (max > 10000) return 0;
+  return max;
+}
+
+function isFeeRange(fee) {
+  if (!fee || typeof fee !== "string") return false;
+  const matches = fee.match(/\d+(?:\.\d+)?/g);
+  if (!matches || matches.length < 2) return false;
+  const nums = matches.map(n => parseFloat(n));
+  return Math.max(...nums) !== Math.min(...nums);
+}
+
 function formatFileSize(bytes) {
   if (bytes < 1024) return bytes + " B";
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
@@ -531,7 +554,26 @@ export default function App() {
         if (results[0] && results[0].value) setProfile(JSON.parse(results[0].value));
         if (results[1] && results[1].value) setProjects(JSON.parse(results[1].value));
         if (results[2] && results[2].value) setOpps(JSON.parse(results[2].value));
-        if (results[3] && results[3].value) setApps(JSON.parse(results[3].value));
+        if (results[3] && results[3].value) {
+          const loadedApps = JSON.parse(results[3].value);
+          // Migration: re-parse costs from feeLabel to fix any corrupted values
+          // (older versions had a parsing bug where "$65-$85" became 6585)
+          let needsResave = false;
+          const fixedApps = loadedApps.map(a => {
+            if (a.feeLabel) {
+              const correctCost = parseFee(a.feeLabel);
+              if (a.cost !== correctCost) {
+                needsResave = true;
+                return { ...a, cost: correctCost, _costFixed: true };
+              }
+            }
+            return a;
+          });
+          setApps(fixedApps);
+          if (needsResave) {
+            window.storage.set(SK.APPS, JSON.stringify(fixedApps)).catch(() => {});
+          }
+        }
         if (results[4] && results[4].value) setPay(JSON.parse(results[4].value));
       } catch (err) {
         console.error(err);
@@ -848,7 +890,7 @@ Respond ONLY with JSON (no markdown):
       const txt = await askClaude(messageContent);
       const parsed = extractJSON(txt);
       if (parsed) {
-        const cost = parseFloat((o.submissionFee || "0").replace(/[^0-9.]/g, "")) || 0;
+        const cost = parseFee(o.submissionFee);
         const currentPay = payRef.current;
         const newApp = {
           id: Date.now().toString(),
@@ -2795,7 +2837,7 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
                     <p style={{ fontSize: "14px", marginTop: "4px" }}>{ra.projTitle}</p>
                   </div>
                   <div>
-                    <p style={LS}>FEE</p>
+                    <p style={LS}>FEE (MAX)</p>
                     <p style={{
                       fontSize: "22px",
                       fontFamily: FN.d,
@@ -2805,6 +2847,11 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
                     }}>
                       {ra.cost > 0 ? "$" + ra.cost.toFixed(2) : "FREE"}
                     </p>
+                    {ra.feeLabel && ra.feeLabel !== "?" && (
+                      <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginTop: "2px" }}>
+                        listed as: {ra.feeLabel}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <p style={LS}>PAYMENT</p>
@@ -2813,6 +2860,20 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
                     </p>
                   </div>
                 </div>
+
+                {isFeeRange(ra.feeLabel) && (
+                  <div style={{
+                    background: C.wn + "10",
+                    border: "1px solid " + C.wn + "30",
+                    borderRadius: "6px",
+                    padding: "12px",
+                    marginBottom: "12px"
+                  }}>
+                    <p style={{ fontSize: "13px", color: C.wn, lineHeight: 1.5 }}>
+                      💡 This fee is a <strong>range ({ra.feeLabel})</strong>. The app uses the maximum amount (${ra.cost.toFixed(2)}) for safety. The actual charge may be lower depending on submission timing, tier, or eligibility.
+                    </p>
+                  </div>
+                )}
 
                 {overLimit && (
                   <div style={{
@@ -2903,13 +2964,27 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
               <p style={{
                 fontSize: "14px",
                 lineHeight: 1.6,
-                marginBottom: "20px"
+                marginBottom: "12px"
               }}>
-                Submit <strong>{apps[submitMdl].oppName}</strong>
-                {apps[submitMdl].cost > 0
-                  ? " — $" + apps[submitMdl].cost.toFixed(2) + " will be charged"
-                  : " (free)"}?
+                Submit <strong>{apps[submitMdl].oppName}</strong>?
               </p>
+              {apps[submitMdl].cost > 0 ? (
+                <div style={{
+                  background: C.wn + "10",
+                  border: "1px solid " + C.wn + "30",
+                  borderRadius: "6px",
+                  padding: "12px",
+                  marginBottom: "16px"
+                }}>
+                  <p style={{ fontSize: "13px", color: C.tx, marginBottom: "4px" }}>
+                    {isFeeRange(apps[submitMdl].feeLabel)
+                      ? "Fee range: " + apps[submitMdl].feeLabel + " (max $" + apps[submitMdl].cost.toFixed(2) + " will be charged)"
+                      : "Fee: $" + apps[submitMdl].cost.toFixed(2) + " will be charged"}
+                  </p>
+                </div>
+              ) : (
+                <p style={{ fontSize: "13px", color: C.ok, marginBottom: "16px" }}>This is a free submission.</p>
+              )}
               <div style={{
                 display: "flex",
                 justifyContent: "flex-end",
