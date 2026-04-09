@@ -650,7 +650,138 @@ async function importAllData(bundle) {
    MAIN APP
    ═══════════════════════════════════════════════════ */
 
-export default function App() {
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null, info: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, info) {
+    console.error("ErrorBoundary caught:", error, info);
+    this.setState({ info });
+  }
+  async handleClearData() {
+    if (!confirm("This will permanently delete ALL app data in this browser (projects, applications, opportunities, everything). Only do this if the app is broken and you have a backup to restore from. Continue?")) {
+      return;
+    }
+    try {
+      // Delete all known storage keys
+      const keys = ["pre-profile", "pre-projects", "pre-opps", "pre-apps", "pre-pay"];
+      for (const k of keys) {
+        try { await window.storage.delete(k); } catch (e) {}
+      }
+      // Delete all project file storage keys
+      try {
+        const listResult = await window.storage.list("pre-files-");
+        if (listResult && listResult.keys) {
+          for (const k of listResult.keys) {
+            try { await window.storage.delete(k); } catch (e) {}
+          }
+        }
+      } catch (e) {}
+      alert("All data cleared. The app will now reload.");
+      window.location.reload();
+    } catch (e) {
+      alert("Clear failed: " + (e.message || "unknown error") + "\n\nTry manually clearing site data in your browser settings.");
+    }
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          minHeight: "100vh",
+          background: "#0a0a0a",
+          color: "#e8e4dc",
+          padding: "40px",
+          fontFamily: "system-ui, -apple-system, sans-serif",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center"
+        }}>
+          <div style={{
+            maxWidth: "560px",
+            background: "#14110f",
+            border: "1px solid #ef4444",
+            borderRadius: "12px",
+            padding: "32px"
+          }}>
+            <h1 style={{
+              fontSize: "26px",
+              fontStyle: "italic",
+              fontFamily: "Georgia, serif",
+              marginBottom: "8px",
+              color: "#ef4444"
+            }}>Something went wrong</h1>
+            <p style={{ fontSize: "14px", color: "#999", marginBottom: "20px", lineHeight: 1.6 }}>
+              The app crashed while rendering. This is usually caused by malformed data (often from an imported backup that doesn't match the current app version). Your data is still safe in browser storage — the crash only affects the display.
+            </p>
+            <div style={{
+              background: "#0a0a0a",
+              border: "1px solid #333",
+              borderRadius: "6px",
+              padding: "12px",
+              marginBottom: "20px",
+              fontSize: "12px",
+              fontFamily: "ui-monospace, monospace",
+              color: "#ef4444",
+              wordBreak: "break-word",
+              maxHeight: "200px",
+              overflow: "auto"
+            }}>
+              {this.state.error ? (this.state.error.message || String(this.state.error)) : "Unknown error"}
+              {this.state.info && this.state.info.componentStack && (
+                <div style={{ color: "#888", marginTop: "8px", fontSize: "11px" }}>
+                  {this.state.info.componentStack.split("\n").slice(0, 5).join("\n")}
+                </div>
+              )}
+            </div>
+            <p style={{ fontSize: "13px", color: "#ccc", marginBottom: "14px", lineHeight: 1.6 }}>
+              <strong>Recovery options:</strong>
+            </p>
+            <ol style={{ fontSize: "13px", color: "#ccc", marginBottom: "20px", paddingLeft: "20px", lineHeight: 1.7 }}>
+              <li><strong>Try reloading first</strong> — sometimes this clears transient errors.</li>
+              <li><strong>Open the browser console (F12)</strong> and send the red error message to Ryan for diagnosis.</li>
+              <li><strong>As a last resort, clear all data</strong> — only if you have a backup you can restore from afterward.</li>
+            </ol>
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+              <button
+                onClick={() => window.location.reload()}
+                style={{
+                  padding: "12px 20px",
+                  background: "#14b8a6",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "6px",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: "pointer"
+                }}
+              >↻ Reload Page</button>
+              <button
+                onClick={() => this.handleClearData()}
+                style={{
+                  padding: "12px 20px",
+                  background: "transparent",
+                  color: "#ef4444",
+                  border: "1px solid #ef4444",
+                  borderRadius: "6px",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: "pointer"
+                }}
+              >⚠ Clear All Data (Nuclear)</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function AppMain() {
   const [tab, setTab] = useState("dash");
   const [profile, setProfile] = useState(DEF_PROFILE);
   const [projects, setProjects] = useState([]);
@@ -1934,8 +2065,9 @@ function DashView({ profile, projects, apps, pay, go, spent, deadlines }) {
   const urgent = deadlines.filter(d => d.dl !== null && d.dl >= 0 && d.dl <= 7);
   const drafts = apps.filter(a => a.status === "draft").length;
 
-  // Portfolio strategy calculations
-  const activeApps = apps.filter(a => a.status === "draft" || a.status === "approved" || a.status === "submitted");
+  // Portfolio strategy calculations (defensive against malformed data)
+  const safeApps = Array.isArray(apps) ? apps : [];
+  const activeApps = safeApps.filter(a => a && (a.status === "draft" || a.status === "approved" || a.status === "submitted"));
   const mix = {
     reach: activeApps.filter(a => a.matchStrength === "speculative").length,
     target: activeApps.filter(a => a.matchStrength === "moderate").length,
@@ -1945,31 +2077,34 @@ function DashView({ profile, projects, apps, pay, go, spent, deadlines }) {
   const totalMix = mix.reach + mix.target + mix.safety + mix.unknown;
 
   // Outcome stats for success rate
-  const withOutcome = apps.filter(a => a.outcome).length;
-  const wins = apps.filter(a => a.outcome === "won").length;
+  const withOutcome = safeApps.filter(a => a && a.outcome).length;
+  const wins = safeApps.filter(a => a && a.outcome === "won").length;
   const successRate = withOutcome > 0 ? Math.round((wins / withOutcome) * 100) : null;
 
   // Fees committed (drafts + approved + submitted not yet received outcomes)
-  const feesCommitted = apps
-    .filter(a => (a.status === "draft" || a.status === "approved") && a.cost > 0)
+  const feesCommitted = safeApps
+    .filter(a => a && (a.status === "draft" || a.status === "approved") && a.cost > 0)
     .reduce((s, a) => s + a.cost, 0);
-  const feesSpent = apps
-    .filter(a => a.status === "submitted")
+  const feesSpent = safeApps
+    .filter(a => a && a.status === "submitted")
     .reduce((s, a) => s + (a.cost || 0), 0);
 
   // Upcoming material deadlines across all apps
   const materialDeadlines = [];
-  apps.forEach(app => {
-    if (app.status === "submitted") return;
-    if (app.content && app.content.externalMaterials) {
+  safeApps.forEach(app => {
+    if (!app || app.status === "submitted") return;
+    if (app.content && Array.isArray(app.content.externalMaterials)) {
       app.content.externalMaterials.forEach(mat => {
+        if (!mat) return;
         if (mat.dueDate && mat.status !== "received" && mat.status !== "na") {
-          const daysUntil = Math.ceil((new Date(mat.dueDate) - new Date()) / (1000 * 60 * 60 * 24));
+          const d = new Date(mat.dueDate);
+          if (isNaN(d.getTime())) return;
+          const daysUntil = Math.ceil((d - new Date()) / (1000 * 60 * 60 * 24));
           materialDeadlines.push({
-            appName: app.oppName,
-            projTitle: app.projTitle,
-            matName: mat.name,
-            assignedTo: mat.assignedTo,
+            appName: app.oppName || "Unknown",
+            projTitle: app.projTitle || "Unknown project",
+            matName: mat.name || "Unnamed material",
+            assignedTo: mat.assignedTo || "",
             daysUntil,
             dueDate: mat.dueDate
           });
@@ -1989,7 +2124,7 @@ function DashView({ profile, projects, apps, pay, go, spent, deadlines }) {
       warnings.push("No strong-match opportunities in your pipeline. These are your highest-probability wins — search for some in Discover.");
     }
   }
-  if (feesCommitted > pay.monthlyBudget * 1.5) {
+  if (pay && feesCommitted > pay.monthlyBudget * 1.5) {
     warnings.push("You have $" + feesCommitted.toFixed(0) + " in draft/approved fees — that's over your monthly budget. Review before submitting.");
   }
   if (withOutcome >= 5 && successRate !== null && successRate < 20) {
@@ -3823,7 +3958,7 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
   /* ── VIEW APP ── */
   if (view !== null && apps[view]) {
     const app = apps[view];
-    const c = app.content;
+    const c = app.content || {};
     // Standard section metadata
     const standardSectionMeta = {
       coverLetter: "Cover Letter",
@@ -3837,7 +3972,7 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
 
     // Determine which standard sections are "needed" based on requirements
     // If requirements aren't present (older apps), fall back to showing any section with content
-    const needed = c.requirements && c.requirements.standardSectionsNeeded
+    const needed = c.requirements && Array.isArray(c.requirements.standardSectionsNeeded)
       ? c.requirements.standardSectionsNeeded
       : allStandardKeys.filter(k => c[k]);
 
@@ -3854,7 +3989,7 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
       .filter(s => s.v);
 
     // Custom sections from requirements
-    const customSectionsList = (c.customSections || []).map(cs => ({
+    const customSectionsList = (Array.isArray(c.customSections) ? c.customSections : []).map(cs => ({
       t: cs.title + (cs.wordLimit && cs.wordLimit !== "unspecified" ? " (" + cs.wordLimit + ")" : ""),
       v: cs.content,
       k: "custom:" + cs.key,
@@ -4288,7 +4423,7 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
           </Card>
         )}
 
-        {c.externalMaterials && c.externalMaterials.length > 0 && (() => {
+        {c.externalMaterials && Array.isArray(c.externalMaterials) && c.externalMaterials.length > 0 && (() => {
           const readyCount = c.externalMaterials.filter(m => m.status === "received" || m.status === "na").length;
           const totalCount = c.externalMaterials.length;
           const allReady = readyCount === totalCount;
@@ -5863,3 +5998,13 @@ function ProfView({ profile, save }) {
     </div>
   );
 }
+
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppMain />
+    </ErrorBoundary>
+  );
+}
+
