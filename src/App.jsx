@@ -1005,6 +1005,12 @@ Before writing a single word of the application, you MUST use web search to rese
 5. Any specific framings, buzzwords, or priorities that recur in their materials
 6. Selection criteria — what do judges/committees explicitly score on?
 7. Any red flags or common reasons applications fail
+8. **THE EXACT APPLICATION REQUIREMENTS** — CRITICAL. Find the actual application form, guidelines, or submission instructions. Identify PRECISELY what this application asks for:
+   - Which standard sections do they require? (cover letter? project statement? artist/director statement? budget? impact? timeline?)
+   - Do they have different section names? (e.g., "Project Description" vs "Project Statement," "Director's Vision" vs "Artist Statement")
+   - Word/character limits per section
+   - Custom sections unique to this opportunity (e.g., "Community Engagement Plan," "Distribution Strategy," "Diversity Statement," "Letter of Interest")
+   - External materials the user must provide themselves (artwork, production stills, trailer/sizzle reel, pitch video, letters of recommendation, W9s, budget spreadsheets, work samples, IMDb links, etc.)
 
 Search broadly. Read multiple pages. Do NOT skip this step.
 
@@ -1013,9 +1019,13 @@ STEP 2 — WRITE THE APPLICATION
 ═══════════════════════════════════════════════════════════
 Armed with your research, write each section with these mandates:
 
+▸ **ONLY GENERATE WHAT'S ACTUALLY REQUIRED**: Do NOT write generic boilerplate sections if this opportunity doesn't ask for them. If the opportunity only requires a cover letter and a project statement, DON'T write an artist statement, impact statement, timeline, and budget justification just to fill out a template. Match the application to exactly what's asked for.
+
 ▸ **TONE MATCHING**: The voice must match how this specific organization communicates. If they're academic and critical, be academic and critical. If they're activist and urgent, be activist and urgent. If they're literary and meditative, be literary and meditative. If they're industry-insider and commercial, be industry-insider and commercial. Match their register exactly.
 
 ▸ **LANGUAGE MIRRORING**: Echo the specific vocabulary and framings the organization uses. If they say "underrepresented voices," use that framing. If they emphasize "craft" or "vision" or "formal innovation" — make those words present.
+
+▸ **RESPECT WORD LIMITS**: If the application specifies word or character limits, adhere to them strictly. A section that runs long gets cut by committees. Write tightly to the specified length.
 
 ▸ **EMPHASIS CALIBRATION**: Different opportunities care about different things. A commercial market lab cares about distribution angles and audience — lead with that. A formally adventurous grant cares about aesthetic risk and artistic lineage — lead with that. A social impact fund cares about community, access, and representation — lead with that. CHOOSE what to emphasize based on your research, not a template.
 
@@ -1045,17 +1055,39 @@ OUTPUT FORMAT (JSON only, no markdown, no backticks)
     "keyCriteria": "The top 3-5 things their selection committee likely weighs most heavily, as a bullet list",
     "strategicInsight": "The single most important insight that shaped how this application was written"
   },
+  "requirements": {
+    "summary": "2-3 sentences describing exactly what this application asks for — reflect what you found in your research about their actual submission form/guidelines",
+    "standardSectionsNeeded": "Array of which STANDARD section keys are actually required by this opportunity. Only include the ones they ask for. Possible keys: coverLetter, projectStatement, artistStatement, budgetJustification, impactStatement, timeline. Example: ['coverLetter', 'projectStatement', 'budgetJustification'] if they only want those three. Return empty array if none are clearly needed.",
+    "wordLimits": "Object mapping section keys to word/character limits. E.g., { 'projectStatement': '500 words', 'artistStatement': '300 words' }. Only include keys that have explicit limits.",
+    "additionalInstructions": "Any special formatting or content instructions per section"
+  },
   "toneStrategy": "2-3 sentences explaining the voice/register/emphasis chosen for this application and WHY it matches this specific opportunity",
-  "coverLetter": "Full cover letter, tailored to the tone of this org. Should open with a hook that makes the reader lean in, then state the ask clearly, then give reasons rooted in what THIS org values.",
-  "projectStatement": "2-3 paragraphs. The heart of the application — what the project is, what it's doing artistically, why it matters. Calibrated to what this org cares about.",
-  "artistStatement": "1-2 paragraphs. Director/creator voice, personal stakes, artistic lineage, why YOU are the right person to make this. Match the tone of artist statements the org has historically responded to.",
-  "budgetJustification": "How the money will be used and why it's necessary at this stage. Be concrete.",
-  "impactStatement": "Why this project matters beyond itself. Frame impact in terms THIS org cares about (community? art form? industry? social change? aesthetics?).",
-  "timeline": "Clear, realistic production/development timeline showing the project will actually happen.",
-  "strategicNotes": "INTERNAL ONLY — not for the application itself. Write 3-5 bullet points for the applicant (Ryan) explaining: what angle you chose and why, what you deliberately emphasized or downplayed, any risks or weak spots in the application, and suggestions for what to personalize or supplement before submitting."
+  "coverLetter": "Only generate if coverLetter is in standardSectionsNeeded. Otherwise return empty string.",
+  "projectStatement": "Only generate if projectStatement is in standardSectionsNeeded. Otherwise return empty string.",
+  "artistStatement": "Only generate if artistStatement is in standardSectionsNeeded. Otherwise return empty string.",
+  "budgetJustification": "Only generate if budgetJustification is in standardSectionsNeeded. Otherwise return empty string.",
+  "impactStatement": "Only generate if impactStatement is in standardSectionsNeeded. Otherwise return empty string.",
+  "timeline": "Only generate if timeline is in standardSectionsNeeded. Otherwise return empty string.",
+  "customSections": [
+    {
+      "key": "camelCaseKey (unique identifier, e.g. 'communityEngagement')",
+      "title": "Human-readable section title as the application form calls it, e.g. 'Community Engagement Plan'",
+      "wordLimit": "500 words (or whatever the app specifies, or 'unspecified')",
+      "content": "The fully written section, tailored to this opportunity"
+    }
+  ],
+  "externalMaterials": [
+    {
+      "name": "Human-readable name, e.g. 'Key artwork / production still'",
+      "requirement": "What the opportunity actually requires, e.g. '300dpi, 16:9 aspect ratio, JPG or PNG'",
+      "note": "Brief note on what the user needs to do — these cannot be auto-generated. E.g., 'Upload your best production still or artwork. Contact your production designer for high-res files.'",
+      "critical": true
+    }
+  ],
+  "strategicNotes": "INTERNAL ONLY — not for the application itself. Write 3-5 bullet points for the applicant (Ryan) explaining: what angle you chose and why, what you deliberately emphasized or downplayed, any risks or weak spots in the application, and suggestions for what to personalize or supplement before submitting. Include a reminder to gather the external materials listed above."
 }
 
-No generic language. No boilerplate. Every word must earn its place. Make this application so specific that it could not have been written for any other opportunity.`;
+No generic language. No boilerplate. Only write what's actually asked for. Every word must earn its place. Make this application so specific that it could not have been written for any other opportunity.`;
 
       let messageContent;
       if (projectFiles.length > 0) {
@@ -1177,9 +1209,9 @@ PROJECT
 
 ${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review carefully and reference specific scenes, visuals, characters, or moments from them — not vague summaries." : ""}
 
-STEP 1 — RESEARCH (REQUIRED): Use web search to research "${app.oppName}" at "${app.oppOrg}". Find their mission, past recipients, aesthetic preferences, tone, and selection criteria. Read their own communication to understand their register.
+STEP 1 — RESEARCH (REQUIRED): Use web search to research "${app.oppName}" at "${app.oppOrg}". Find their mission, past recipients, aesthetic preferences, tone, selection criteria, AND — critically — the EXACT application requirements: which sections are asked for, word limits, custom sections unique to this opportunity, and any external materials (artwork, letters of rec, pitch videos, etc.) the applicant must provide themselves.
 
-STEP 2 — WRITE: Every section must match the org's voice, use their vocabulary, emphasize what they care about, and answer "why THIS project for THIS opportunity." No generic grant-speak.
+STEP 2 — WRITE: Only generate the sections this opportunity actually requires. Don't write generic boilerplate for sections not asked for. Every section must match the org's voice, respect any word limits, and answer "why THIS project for THIS opportunity."
 
 Respond ONLY with JSON (no markdown):
 {
@@ -1190,14 +1222,26 @@ Respond ONLY with JSON (no markdown):
     "keyCriteria": "Top 3-5 things their committee weighs, as bullets",
     "strategicInsight": "The single most important insight shaping this application"
   },
-  "toneStrategy": "2-3 sentences on the voice/emphasis chosen for this app and WHY it matches this opportunity",
-  "coverLetter": "...",
-  "projectStatement": "2-3 para",
-  "artistStatement": "1-2 para",
-  "budgetJustification": "...",
-  "impactStatement": "...",
-  "timeline": "...",
-  "strategicNotes": "Internal bullet points for the applicant: angle chosen, what was emphasized, risks, suggestions for personalization."
+  "requirements": {
+    "summary": "2-3 sentences describing exactly what this application asks for",
+    "standardSectionsNeeded": "Array of standard keys the opp actually requires: ['coverLetter','projectStatement','artistStatement','budgetJustification','impactStatement','timeline']. Include only the ones they ask for.",
+    "wordLimits": "Object mapping section keys to limits, e.g. { 'projectStatement': '500 words' }",
+    "additionalInstructions": "Any special formatting/content notes"
+  },
+  "toneStrategy": "2-3 sentences on the voice/emphasis chosen for this app and WHY",
+  "coverLetter": "Only if in standardSectionsNeeded, else empty string",
+  "projectStatement": "Only if in standardSectionsNeeded, else empty string",
+  "artistStatement": "Only if in standardSectionsNeeded, else empty string",
+  "budgetJustification": "Only if in standardSectionsNeeded, else empty string",
+  "impactStatement": "Only if in standardSectionsNeeded, else empty string",
+  "timeline": "Only if in standardSectionsNeeded, else empty string",
+  "customSections": [
+    { "key": "camelCaseKey", "title": "Human Title", "wordLimit": "...", "content": "..." }
+  ],
+  "externalMaterials": [
+    { "name": "...", "requirement": "...", "note": "...", "critical": true }
+  ],
+  "strategicNotes": "Internal bullet points: angle chosen, what was emphasized, risks, personalization suggestions, reminder to gather external materials."
 }`;
       } else {
         // Augment mode: surgical update preserving tone and user edits
@@ -1241,6 +1285,8 @@ CRITICAL AUGMENTATION RULES
 3. Integrate new information naturally (new producer credits, new themes from fresh analysis). Don't force changes.
 4. Preserve any phrasing that works well for this opportunity's tone.
 5. If the opportunity's focus has evolved per your research, note it and adjust sparingly.
+6. **PRESERVE REQUIREMENTS**: The existing draft has a 'requirements' field showing which sections this opportunity actually asks for, plus 'customSections' and 'externalMaterials'. Preserve these unless your re-research reveals the opportunity's requirements have changed. If they have changed, update them.
+7. **DO NOT add standard sections that aren't in requirements.standardSectionsNeeded**. Only update sections the opportunity actually asks for.
 
 Respond ONLY with JSON (no markdown):
 {
@@ -1251,13 +1297,21 @@ Respond ONLY with JSON (no markdown):
     "keyCriteria": "Top 3-5 committee priorities",
     "strategicInsight": "Key insight that guided this refresh"
   },
+  "requirements": {
+    "summary": "Preserve from existing unless research reveals changes",
+    "standardSectionsNeeded": "Preserve from existing unless research reveals changes",
+    "wordLimits": "Preserve from existing unless research reveals changes",
+    "additionalInstructions": "Preserve from existing unless research reveals changes"
+  },
   "toneStrategy": "Brief statement of how the voice is calibrated",
-  "coverLetter": "...",
-  "projectStatement": "...",
-  "artistStatement": "...",
-  "budgetJustification": "...",
-  "impactStatement": "...",
-  "timeline": "...",
+  "coverLetter": "Preserve or update — only if in standardSectionsNeeded",
+  "projectStatement": "Preserve or update — only if in standardSectionsNeeded",
+  "artistStatement": "Preserve or update — only if in standardSectionsNeeded",
+  "budgetJustification": "Preserve or update — only if in standardSectionsNeeded",
+  "impactStatement": "Preserve or update — only if in standardSectionsNeeded",
+  "timeline": "Preserve or update — only if in standardSectionsNeeded",
+  "customSections": "Preserve existing custom sections with updated content where needed",
+  "externalMaterials": "Preserve existing external materials list, updating only if requirements changed",
   "strategicNotes": "...",
   "changesSummary": "Brief bullet points: what was updated and why, or 'No meaningful changes needed' if the draft already incorporates the latest intelligence well."
 }`;
@@ -1295,7 +1349,7 @@ Respond ONLY with JSON (no markdown):
           if (a.id !== appId) return a;
           const newContent = { ...a.content };
           // Copy over any fields that came back, including research + toneStrategy
-          ["projectStatement", "artistStatement", "budgetJustification", "impactStatement", "timeline", "coverLetter", "strategicNotes", "research", "toneStrategy"].forEach(k => {
+          ["projectStatement", "artistStatement", "budgetJustification", "impactStatement", "timeline", "coverLetter", "strategicNotes", "research", "toneStrategy", "requirements", "customSections", "externalMaterials"].forEach(k => {
             if (parsed[k]) newContent[k] = parsed[k];
           });
           return {
@@ -2039,7 +2093,34 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
           >{isAnalyzing(p.id) ? "Analyzing..." : "↻ Re-analyze"}</Btn>
         </div>
 
-        {isAnalyzing(p.id) && <Loader text="Running deep analysis with your uploaded materials..." />}
+        {isAnalyzing(p.id) && !a && <Loader text="Running deep analysis with your uploaded materials..." />}
+
+        {isAnalyzing(p.id) && a && (
+          <Card style={{
+            marginBottom: "16px",
+            borderColor: C.tl + "50",
+            background: C.tl + "10"
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <span style={{
+                display: "inline-block",
+                width: "10px",
+                height: "10px",
+                borderRadius: "50%",
+                background: C.tl,
+                animation: "pulse 1.5s infinite"
+              }} />
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: "14px", fontWeight: 600, color: C.tl }}>
+                  Re-analysis in progress
+                </p>
+                <p style={{ fontSize: "12px", color: C.tm, marginTop: "2px" }}>
+                  The existing analysis below stays visible. It'll be replaced when the new one is ready.
+                </p>
+              </div>
+            </div>
+          </Card>
+        )}
 
         {(() => {
           if (!a || !apps) return null;
@@ -2104,7 +2185,7 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
           />
         )}
 
-        {a && !isAnalyzing(p.id) && (
+        {a && (
           <div>
             {a.team && (
               <Card style={{ marginBottom: "16px", borderColor: C.ok + "40", background: C.ok + "06" }}>
@@ -3363,14 +3444,56 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
   if (view !== null && apps[view]) {
     const app = apps[view];
     const c = app.content;
-    const sections = [
-      { t: "Cover Letter", v: c.coverLetter, k: "coverLetter" },
-      { t: "Project Statement", v: c.projectStatement, k: "projectStatement" },
-      { t: "Artist Statement", v: c.artistStatement, k: "artistStatement" },
-      { t: "Budget Justification", v: c.budgetJustification, k: "budgetJustification" },
-      { t: "Impact Statement", v: c.impactStatement, k: "impactStatement" },
-      { t: "Timeline", v: c.timeline, k: "timeline" }
-    ].filter(s => s.v);
+    // Standard section metadata
+    const standardSectionMeta = {
+      coverLetter: "Cover Letter",
+      projectStatement: "Project Statement",
+      artistStatement: "Artist Statement",
+      budgetJustification: "Budget Justification",
+      impactStatement: "Impact Statement",
+      timeline: "Timeline"
+    };
+    const allStandardKeys = Object.keys(standardSectionMeta);
+
+    // Determine which standard sections are "needed" based on requirements
+    // If requirements aren't present (older apps), fall back to showing any section with content
+    const needed = c.requirements && c.requirements.standardSectionsNeeded
+      ? c.requirements.standardSectionsNeeded
+      : allStandardKeys.filter(k => c[k]);
+
+    const wordLimits = (c.requirements && c.requirements.wordLimits) || {};
+
+    // Build the required sections list
+    const requiredSections = needed
+      .map(k => ({
+        t: standardSectionMeta[k] + (wordLimits[k] ? " (" + wordLimits[k] + ")" : ""),
+        v: c[k],
+        k: k,
+        isCustom: false
+      }))
+      .filter(s => s.v);
+
+    // Custom sections from requirements
+    const customSectionsList = (c.customSections || []).map(cs => ({
+      t: cs.title + (cs.wordLimit && cs.wordLimit !== "unspecified" ? " (" + cs.wordLimit + ")" : ""),
+      v: cs.content,
+      k: "custom:" + cs.key,
+      isCustom: true,
+      customKey: cs.key
+    })).filter(s => s.v);
+
+    // Sections that were generated but not required by this opportunity
+    const extraSections = allStandardKeys
+      .filter(k => !needed.includes(k) && c[k])
+      .map(k => ({
+        t: standardSectionMeta[k],
+        v: c[k],
+        k: k,
+        isCustom: false
+      }));
+
+    const sections = [...requiredSections, ...customSectionsList];
+
     const sc = { draft: C.wn, approved: C.ac, submitted: C.ok };
     const pm = pay.methods.find(m => m.id === app.payId);
     const canEdit = app.status !== "submitted";
@@ -3387,13 +3510,20 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
 
     const saveEdit = (key) => {
       const updated = [...apps];
+      const newContent = { ...updated[view].content };
+      if (key.startsWith("custom:")) {
+        const customKey = key.slice(7);
+        newContent.customSections = (newContent.customSections || []).map(cs =>
+          cs.key === customKey ? { ...cs, content: draftText } : cs
+        );
+      } else {
+        newContent[key] = draftText;
+      }
       updated[view] = {
         ...updated[view],
-        content: { ...updated[view].content, [key]: draftText },
+        content: newContent,
         editedAt: new Date().toISOString(),
-        // If they edit an approved app, drop back to draft so it gets re-reviewed
         status: updated[view].status === "approved" ? "draft" : updated[view].status,
-        // Reset review checks if reverting to draft
         checks: updated[view].status === "approved"
           ? { content: false, cost: false, ready: false }
           : updated[view].checks
@@ -3593,6 +3723,116 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
           </Card>
         )}
 
+        {c.requirements && (c.requirements.summary || (c.requirements.standardSectionsNeeded && c.requirements.standardSectionsNeeded.length > 0)) && (
+          <Card style={{
+            marginBottom: "12px",
+            borderColor: C.ac + "40",
+            background: C.ac + "06"
+          }}>
+            <h3 style={{
+              fontFamily: FN.d,
+              fontSize: "18px",
+              fontStyle: "italic",
+              color: C.ac,
+              marginBottom: "4px"
+            }}>📋 What This Application Requires</h3>
+            <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "14px" }}>
+              Based on the AI's research of this opportunity's actual submission guidelines
+            </p>
+            {c.requirements.summary && (
+              <p style={{
+                fontSize: "13px",
+                lineHeight: 1.6,
+                color: C.tx,
+                marginBottom: "14px"
+              }}>{c.requirements.summary}</p>
+            )}
+            {sections.length > 0 && (
+              <div style={{ marginBottom: "10px" }}>
+                <p style={{ ...LS, marginBottom: "6px" }}>REQUIRED SECTIONS</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                  {sections.map((s, i) => (
+                    <p key={i} style={{ fontSize: "12px", color: C.tx }}>
+                      ✓ {s.t}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+            {c.requirements.additionalInstructions && (
+              <div style={{ marginTop: "10px" }}>
+                <p style={{ ...LS, marginBottom: "4px" }}>SPECIAL INSTRUCTIONS</p>
+                <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5 }}>
+                  {c.requirements.additionalInstructions}
+                </p>
+              </div>
+            )}
+          </Card>
+        )}
+
+        {c.externalMaterials && c.externalMaterials.length > 0 && (
+          <Card style={{
+            marginBottom: "12px",
+            borderColor: C.wn + "50",
+            background: C.wn + "08"
+          }}>
+            <h3 style={{
+              fontFamily: FN.d,
+              fontSize: "18px",
+              fontStyle: "italic",
+              color: C.wn,
+              marginBottom: "4px"
+            }}>⚠ External Materials You Must Provide</h3>
+            <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "14px" }}>
+              These can't be auto-generated — gather them before submitting
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              {c.externalMaterials.map((mat, i) => (
+                <div key={i} style={{
+                  background: C.bg,
+                  padding: "12px 14px",
+                  borderRadius: "6px",
+                  borderLeft: "3px solid " + (mat.critical ? C.dn : C.wn)
+                }}>
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    marginBottom: "4px"
+                  }}>
+                    <p style={{ fontSize: "13px", fontWeight: 600, color: C.tx }}>
+                      {mat.name}
+                    </p>
+                    {mat.critical && <Bdg color={C.dn}>REQUIRED</Bdg>}
+                  </div>
+                  {mat.requirement && (
+                    <p style={{ fontSize: "12px", color: C.tm, marginBottom: "4px", fontFamily: FN.m }}>
+                      {mat.requirement}
+                    </p>
+                  )}
+                  {mat.note && (
+                    <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5 }}>
+                      {mat.note}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {sections.length === 0 && (
+          <Card style={{
+            marginBottom: "12px",
+            borderColor: C.tm + "30",
+            background: C.bg
+          }}>
+            <p style={{ fontSize: "13px", color: C.tm, textAlign: "center", padding: "20px" }}>
+              No written sections were required for this application. Check the External Materials above for what you need to provide.
+            </p>
+          </Card>
+        )}
+
         {sections.map((s, i) => {
           const isEditing = editingKey === s.k;
           return (
@@ -3659,6 +3899,54 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
             </Card>
           );
         })}
+
+        {extraSections.length > 0 && (
+          <details style={{
+            marginBottom: "12px",
+            background: C.bg,
+            border: "1px solid " + C.bd,
+            borderRadius: "8px",
+            padding: "12px 16px"
+          }}>
+            <summary style={{
+              cursor: "pointer",
+              fontSize: "12px",
+              color: C.tm,
+              fontFamily: FN.m,
+              letterSpacing: "0.04em",
+              userSelect: "none"
+            }}>
+              + {extraSections.length} ADDITIONAL SECTION{extraSections.length > 1 ? "S" : ""} GENERATED (NOT REQUIRED BY THIS OPPORTUNITY)
+            </summary>
+            <p style={{ fontSize: "11px", color: C.tm, marginTop: "10px", marginBottom: "12px", lineHeight: 1.5 }}>
+              These sections were generated but this specific opportunity doesn't ask for them. They're kept here in case you want to reference or repurpose them.
+            </p>
+            {extraSections.map((s, i) => (
+              <div key={i} style={{
+                marginTop: "10px",
+                padding: "12px 14px",
+                background: C.sf,
+                borderRadius: "6px",
+                opacity: 0.75
+              }}>
+                <p style={{
+                  fontFamily: FN.m,
+                  fontSize: "11px",
+                  color: C.tm,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                  marginBottom: "8px"
+                }}>{s.t}</p>
+                <p style={{
+                  fontSize: "13px",
+                  lineHeight: 1.7,
+                  whiteSpace: "pre-wrap",
+                  color: C.tm
+                }}>{s.v}</p>
+              </div>
+            ))}
+          </details>
+        )}
 
         {c.strategicNotes && (() => {
           const isEditing = editingKey === "strategicNotes";
