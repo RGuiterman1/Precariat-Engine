@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 
 /* ═══════════════════════════════════════════════════
    CONFIG
@@ -104,6 +104,7 @@ const GS = () => (
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
     @keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
   `}</style>
 );
 
@@ -496,6 +497,30 @@ export default function App() {
   const [pay, setPay] = useState(DEF_PAY);
   const [ready, setReady] = useState(false);
 
+  // Background jobs system — operations continue running when you switch tabs
+  const [jobs, setJobs] = useState([]);
+  // job = { id, kind: "analyze"|"search"|"generate", status: "running"|"error", label, error, startedAt, meta }
+
+  // Lifted Discover state (persists across tab switches)
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchProjectIdx, setSearchProjectIdx] = useState(0);
+  const [searchFilter, setSearchFilter] = useState("All");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchError, setSearchError] = useState("");
+
+  // Refs keep latest values accessible inside long-running async functions
+  const projectsRef = React.useRef(projects);
+  const appsRef = React.useRef(apps);
+  const payRef = React.useRef(pay);
+  const profileRef = React.useRef(profile);
+  const oppsRef = React.useRef(opps);
+
+  useEffect(() => { projectsRef.current = projects; }, [projects]);
+  useEffect(() => { appsRef.current = apps; }, [apps]);
+  useEffect(() => { payRef.current = pay; }, [pay]);
+  useEffect(() => { profileRef.current = profile; }, [profile]);
+  useEffect(() => { oppsRef.current = opps; }, [opps]);
+
   useEffect(() => {
     (async () => {
       try {
@@ -529,6 +554,329 @@ export default function App() {
   const sOpps = makeSaver(SK.OPPS, setOpps);
   const sApps = makeSaver(SK.APPS, setApps);
   const sPay = makeSaver(SK.PAY, setPay);
+
+  // Jobs helpers
+  const addJob = (job) => {
+    const fullJob = { ...job, startedAt: new Date().toISOString() };
+    setJobs(j => [...j, fullJob]);
+    return fullJob.id;
+  };
+  const updateJob = (id, updates) => {
+    setJobs(j => j.map(x => x.id === id ? { ...x, ...updates } : x));
+  };
+  const removeJob = (id) => {
+    setJobs(j => j.filter(x => x.id !== id));
+  };
+  const dismissJob = (id) => removeJob(id);
+
+  // Background: Analyze a project
+  const runAnalyze = async (projectId) => {
+    const existing = jobs.find(j => j.kind === "analyze" && j.meta?.projectId === projectId && j.status === "running");
+    if (existing) return;
+
+    const p = projectsRef.current.find(x => x.id === projectId);
+    if (!p) return;
+
+    const jobId = "analyze-" + projectId + "-" + Date.now();
+    addJob({
+      id: jobId,
+      kind: "analyze",
+      status: "running",
+      label: "Analyzing: " + p.title,
+      meta: { projectId }
+    });
+
+    try {
+      const projectFiles = await loadProjectFiles(p.id);
+      const prof = profileRef.current;
+
+      const textPrompt = `You are a world-class film strategist who has programmed Sundance, Cannes, and advised A24. Analyze this project with extreme depth.
+
+COMPANY: ${prof.companyName} | ${prof.founders} | ${prof.location}
+Credits: ${prof.credits}
+Specialties: ${prof.specialties}
+Bio: ${prof.bio}
+
+PROJECT:
+Title: "${p.title}"
+Format: ${p.format}
+Genre: ${p.genre || "Not specified"}
+Stage: ${p.stage}
+Logline: ${p.logline || "Not provided"}
+Synopsis: ${p.synopsis || "Not provided"}
+Budget: ${p.budget || "Not specified"}
+Runtime: ${p.runtime || "Not specified"}
+Target Audience: ${p.targetAudience || "Not specified"}
+Themes: ${p.themes || "Not specified"}
+Team Notes: ${p.teamNotes || "Not specified"}
+
+${projectFiles.length > 0 ? "ATTACHED MATERIALS (review carefully for deep analysis):\n" + projectFiles.map(f => "- " + f.name + " (" + f.category + ")").join("\n") + "\n\nUse attached materials as the PRIMARY source. Reference specific scenes, visuals, or content from them.\n" : ""}
+
+Respond ONLY with JSON (no markdown, no backticks):
+{
+  "artistic": {
+    "thematicCore": "3-4 sentences on the deepest thematic concerns. What questions does it ask?",
+    "narrativeApproach": "2-3 sentences on storytelling strategy, structure, perspective, tone",
+    "visualIdentity": "2-3 sentences on visual/aesthetic language. Reference specific styles or filmmakers",
+    "artisticLineage": "2-3 sentences on what films, artists, or traditions this is in conversation with",
+    "culturalSignificance": "2-3 sentences on why this story matters NOW"
+  },
+  "market": {
+    "comparables": "3-5 comparable films with rationale",
+    "festivalStrategy": "3-4 sentences naming specific festivals and sections",
+    "audienceProfile": "2-3 sentences on core and secondary audiences",
+    "distributionAngle": "2-3 sentences on distribution strategy",
+    "marketPositioning": "2-3 sentences on unique selling proposition",
+    "grantFitProfile": "2-3 sentences on what funding bodies would be receptive"
+  },
+  "strategy": {
+    "strengths": "3-4 points on competitive strengths",
+    "risks": "2-3 points on potential concerns with mitigations",
+    "keyPhrasing": "5-8 specific phrases that should appear in applications",
+    "submissionTiming": "2-3 sentences on optimal timing",
+    "idealOpportunityTypes": "ranked list of opportunity types with rationale"
+  }
+}
+
+Be brutally specific to THIS project only. No generic advice.`;
+
+      let messageContent;
+      if (projectFiles.length > 0) {
+        const blocks = [{ type: "text", text: textPrompt }];
+        for (const f of projectFiles) {
+          if (f.isText) {
+            blocks.push({
+              type: "text",
+              text: "\n--- " + f.name + " (" + f.category + ") ---\n" + f.data
+            });
+          } else if (f.mediaType === "application/pdf") {
+            blocks.push({
+              type: "document",
+              source: { type: "base64", media_type: "application/pdf", data: f.data }
+            });
+          } else if (f.mediaType.startsWith("image/")) {
+            blocks.push({
+              type: "image",
+              source: { type: "base64", media_type: f.mediaType, data: f.data }
+            });
+          }
+        }
+        messageContent = blocks;
+      } else {
+        messageContent = textPrompt;
+      }
+
+      const txt = await askClaude(messageContent);
+      const result = extractJSON(txt);
+      if (result) {
+        const current = projectsRef.current;
+        const updated = current.map(proj =>
+          proj.id === projectId
+            ? { ...proj, analysis: { ...result, analyzedAt: new Date().toISOString(), basedOnFiles: projectFiles.length } }
+            : proj
+        );
+        sProjects(updated);
+        removeJob(jobId);
+      } else {
+        updateJob(jobId, { status: "error", error: "Couldn't parse AI response as JSON. Try again." });
+      }
+    } catch (e) {
+      console.error("Analyze error:", e);
+      updateJob(jobId, { status: "error", error: e.message || "Analysis failed" });
+    }
+  };
+
+  // Background: Search for opportunities
+  const runSearch = async (projectIdx, filter, query) => {
+    const p = projectsRef.current[projectIdx];
+    if (!p) return;
+
+    // Kill any existing running search
+    setJobs(j => j.filter(x => x.kind !== "search" || x.status !== "running"));
+    setSearchResults([]);
+    setSearchError("");
+
+    const jobId = "search-" + Date.now();
+    addJob({
+      id: jobId,
+      kind: "search",
+      status: "running",
+      label: "Searching opportunities for: " + p.title,
+      meta: { projectId: p.id }
+    });
+
+    const a = p.analysis;
+    const tf = filter === "All"
+      ? "grants, festivals, labs, fellowships, and residencies"
+      : filter.toLowerCase();
+
+    const stageRules = {
+      "Development": "Only return opportunities that accept projects IN DEVELOPMENT (screenplay stage, not yet in production). This includes: screenwriting grants, script development funds, writers labs, development fellowships, story/screenplay competitions, early-stage incubators, and development residencies. DO NOT return film festivals (which require finished films), completed-film awards, distribution grants, post-production funds, or anything requiring an existing cut or finished work.",
+      "Pre-Production": "Only return opportunities that accept projects in PRE-PRODUCTION (script is locked, preparing to shoot). This includes: production financing grants, pre-production labs, production fellowships, producer labs, and packaging/financing programs. DO NOT return completed-film festivals, post-production funds, or development-only grants.",
+      "Production": "Only return opportunities that accept projects currently IN PRODUCTION (actively shooting). This includes: production grants, in-progress financing, and labs accepting projects mid-production. DO NOT return completed-film festivals, development-only grants, or post-production funds.",
+      "Post-Production": "Only return opportunities that accept projects in POST-PRODUCTION (shot but not finished). This includes: finishing funds, post-production grants, work-in-progress showcases, rough-cut labs, and WIP festivals. DO NOT return completed-film festivals requiring a locked final cut (unless they have a WIP section), development grants, or production-only funds.",
+      "Completed": "Only return opportunities for FINISHED films. This includes: film festivals (premiere and subsequent), distribution grants, completed-film awards, and release support programs. DO NOT return development grants, production funds, or opportunities requiring in-progress work."
+    };
+
+    const stageRule = stageRules[p.stage] || "Match opportunities appropriate to the project's current stage.";
+
+    let analysisContext = "";
+    if (a) {
+      analysisContext = "\nPROJECT INTELLIGENCE:\n"
+        + "Artistic: " + JSON.stringify(a.artistic || {}) + "\n"
+        + "Market: " + JSON.stringify(a.market || {}) + "\n"
+        + "Strategy: " + JSON.stringify(a.strategy || {}) + "\n\n"
+        + "Use this intelligence to find opportunities aligned with the project's specific artistic and market profile.";
+    }
+
+    const prof = profileRef.current;
+    const prompt = `You are an expert film industry researcher. Search for REAL, currently open or upcoming ${tf} for this project.
+
+COMPANY: ${prof.companyName} | ${prof.bio} | ${prof.location}
+PROJECT: "${p.title}"
+Format: ${p.format}
+Genre: ${p.genre || "?"}
+Stage: ${p.stage}
+Logline: ${p.logline || "?"}
+Themes: ${p.themes || "?"}${analysisContext}
+${query && query.trim() ? "\nAdditional focus: " + query : ""}
+
+🚨 CRITICAL STAGE REQUIREMENT (NON-NEGOTIABLE):
+This project is currently in "${p.stage}" stage. ${stageRule}
+
+Before returning ANY opportunity, verify it explicitly accepts projects in "${p.stage}" stage. If an opportunity requires a different stage, EXCLUDE IT. It is better to return fewer results than to include mismatched opportunities.
+
+Respond ONLY with a JSON array. Each object must have:
+- "name", "organization"
+- "type" ("Grant"|"Festival"|"Lab"|"Fellowship"|"Residency")
+- "deadline" (specific date like "June 15, 2026" when available)
+- "amount", "submissionFee", "url"
+- "description" (2-3 sentences)
+- "stageEligibility" (explicit quote or paraphrase from the opportunity confirming it accepts ${p.stage}-stage projects)
+- "matchReason" (why this fits THIS specific project — reference the analysis if provided)
+- "matchStrength" ("strong"|"moderate"|"speculative")
+- "eligibility" (other key requirements beyond stage)
+
+Find 6-12 real opportunities that STRICTLY match the project's current stage. Quality over quantity.`;
+
+    try {
+      const txt = await askClaude(prompt, true);
+      const parsed = extractJSON(txt);
+      if (parsed && Array.isArray(parsed)) {
+        const order = { strong: 0, moderate: 1, speculative: 2 };
+        const sorted = [...parsed].sort(
+          (a, b) => (order[a.matchStrength] || 2) - (order[b.matchStrength] || 2)
+        );
+        setSearchResults(sorted);
+        removeJob(jobId);
+      } else {
+        setSearchError("Couldn't parse results.");
+        updateJob(jobId, { status: "error", error: "Parse failed" });
+      }
+    } catch (e) {
+      console.error("Search error:", e);
+      setSearchError(e.message || "Search failed");
+      updateJob(jobId, { status: "error", error: e.message || "Search failed" });
+    }
+  };
+
+  // Background: Generate an application
+  const runGenerate = async (oppIdx, projectIdx) => {
+    const o = oppsRef.current[oppIdx];
+    const p = projectsRef.current[projectIdx];
+    if (!o || !p) return;
+
+    const jobId = "generate-" + Date.now();
+    addJob({
+      id: jobId,
+      kind: "generate",
+      status: "running",
+      label: "Generating application: " + o.name,
+      meta: { oppName: o.name, projectTitle: p.title }
+    });
+
+    try {
+      const a = p.analysis;
+      const projectFiles = await loadProjectFiles(p.id);
+      const prof = profileRef.current;
+
+      let analysisContext = "";
+      if (a) analysisContext = "\nPROJECT INTELLIGENCE:\n" + JSON.stringify(a);
+
+      const textPrompt = `You are a world-class grant writer. Generate a complete, hand-tailored application.
+
+OPPORTUNITY: ${o.name} | ${o.organization} | ${o.type} | ${o.description}
+COMPANY: ${prof.companyName} | ${prof.founders} | ${prof.location} | ${prof.bio} | ${prof.credits}
+PROJECT: "${p.title}" | ${p.format} | ${p.genre || "?"} | ${p.stage} | ${p.logline || "?"} | ${p.synopsis || "?"} | ${p.themes || "?"}${analysisContext}
+
+${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review the attached files (screenplay, pitch deck, etc.) and reference specific content from them in the application." : ""}
+
+Respond ONLY with JSON (no markdown):
+{
+  "projectStatement": "2-3 para",
+  "artistStatement": "1-2 para",
+  "budgetJustification": "...",
+  "impactStatement": "...",
+  "timeline": "...",
+  "coverLetter": "...",
+  "strategicNotes": "internal notes only"
+}`;
+
+      let messageContent;
+      if (projectFiles.length > 0) {
+        const blocks = [{ type: "text", text: textPrompt }];
+        for (const f of projectFiles) {
+          if (f.isText) {
+            blocks.push({ type: "text", text: "\n--- " + f.name + " ---\n" + f.data });
+          } else if (f.mediaType === "application/pdf") {
+            blocks.push({
+              type: "document",
+              source: { type: "base64", media_type: "application/pdf", data: f.data }
+            });
+          } else if (f.mediaType.startsWith("image/")) {
+            blocks.push({
+              type: "image",
+              source: { type: "base64", media_type: f.mediaType, data: f.data }
+            });
+          }
+        }
+        messageContent = blocks;
+      } else {
+        messageContent = textPrompt;
+      }
+
+      const txt = await askClaude(messageContent);
+      const parsed = extractJSON(txt);
+      if (parsed) {
+        const cost = parseFloat((o.submissionFee || "0").replace(/[^0-9.]/g, "")) || 0;
+        const currentPay = payRef.current;
+        const newApp = {
+          id: Date.now().toString(),
+          oppName: o.name,
+          oppOrg: o.organization,
+          oppUrl: o.url,
+          projTitle: p.title,
+          hadAnalysis: !!a,
+          hadFiles: projectFiles.length > 0,
+          status: "draft",
+          cost: cost,
+          feeLabel: o.submissionFee || "?",
+          payId: currentPay.defaultMethodId,
+          createdAt: new Date().toISOString(),
+          content: parsed,
+          checks: { content: false, cost: false, ready: false }
+        };
+        const currentApps = appsRef.current;
+        sApps([...currentApps, newApp]);
+        removeJob(jobId);
+      } else {
+        updateJob(jobId, { status: "error", error: "Parse failed" });
+      }
+    } catch (e) {
+      console.error("Generate error:", e);
+      updateJob(jobId, { status: "error", error: e.message || "Generation failed" });
+    }
+  };
 
   if (!ready) {
     return (
@@ -658,6 +1006,72 @@ export default function App() {
         </div>
 
         <div style={{ padding: "16px 20px", borderTop: "1px solid " + C.bd }}>
+          {jobs.length > 0 && (
+            <div style={{
+              marginBottom: "12px",
+              padding: "10px",
+              background: C.tl + "10",
+              border: "1px solid " + C.tl + "30",
+              borderRadius: "6px"
+            }}>
+              <p style={{
+                fontFamily: FN.m,
+                fontSize: "9px",
+                color: C.tl,
+                letterSpacing: "0.06em",
+                marginBottom: "6px",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px"
+              }}>
+                <span style={{
+                  display: "inline-block",
+                  width: "6px",
+                  height: "6px",
+                  background: jobs.some(j => j.status === "running") ? C.tl : C.dn,
+                  borderRadius: "50%",
+                  animation: jobs.some(j => j.status === "running") ? "pulse 1.5s infinite" : "none"
+                }} />
+                {jobs.filter(j => j.status === "running").length} RUNNING
+                {jobs.some(j => j.status === "error") && " · " + jobs.filter(j => j.status === "error").length + " ERROR"}
+              </p>
+              {jobs.slice(0, 3).map(j => (
+                <div key={j.id} style={{ marginBottom: "4px" }}>
+                  <p style={{
+                    fontSize: "10px",
+                    color: j.status === "error" ? C.dn : C.tx,
+                    lineHeight: 1.4,
+                    wordBreak: "break-word"
+                  }}>
+                    {j.status === "running" ? "⏳ " : "⚠ "}
+                    {j.label.length > 32 ? j.label.slice(0, 32) + "..." : j.label}
+                  </p>
+                  {j.status === "error" && (
+                    <div style={{ display: "flex", gap: "6px", marginTop: "2px" }}>
+                      <button
+                        onClick={() => dismissJob(j.id)}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: C.tm,
+                          fontSize: "9px",
+                          fontFamily: FN.m,
+                          cursor: "pointer",
+                          padding: 0,
+                          textDecoration: "underline"
+                        }}
+                      >dismiss</button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {jobs.length > 3 && (
+                <p style={{ fontSize: "9px", color: C.tm, marginTop: "4px" }}>
+                  +{jobs.length - 3} more
+                </p>
+              )}
+            </div>
+          )}
           <p style={{
             fontFamily: FN.m,
             fontSize: "9px",
@@ -693,6 +1107,7 @@ export default function App() {
             go={setTab}
             spent={spent}
             deadlines={deadlines}
+            jobs={jobs}
           />
         )}
         {tab === "proj" && (
@@ -700,6 +1115,9 @@ export default function App() {
             projects={projects}
             save={sProjects}
             profile={profile}
+            jobs={jobs}
+            runAnalyze={runAnalyze}
+            dismissJob={dismissJob}
           />
         )}
         {tab === "disc" && (
@@ -708,6 +1126,19 @@ export default function App() {
             projects={projects}
             opps={opps}
             save={sOpps}
+            jobs={jobs}
+            runSearch={runSearch}
+            searchResults={searchResults}
+            setSearchResults={setSearchResults}
+            searchProjectIdx={searchProjectIdx}
+            setSearchProjectIdx={setSearchProjectIdx}
+            searchFilter={searchFilter}
+            setSearchFilter={setSearchFilter}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            searchError={searchError}
+            setSearchError={setSearchError}
+            dismissJob={dismissJob}
           />
         )}
         {tab === "dead" && (
@@ -726,6 +1157,9 @@ export default function App() {
             apps={apps}
             save={sApps}
             pay={pay}
+            jobs={jobs}
+            runGenerate={runGenerate}
+            dismissJob={dismissJob}
           />
         )}
         {tab === "pay" && (
@@ -930,13 +1364,19 @@ function DashView({ profile, projects, apps, pay, go, spent, deadlines }) {
    PROJECTS (with file upload)
    ═══════════════════════════════════════════════════ */
 
-function ProjView({ projects, save, profile }) {
+function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob }) {
   const [edit, setEdit] = useState(null);
   const [viewAn, setViewAn] = useState(null);
-  const [busy, setBusy] = useState(false);
   const [uploadErr, setUploadErr] = useState("");
-  const [analyzeErr, setAnalyzeErr] = useState("");
-  const [analyzingIdx, setAnalyzingIdx] = useState(null);
+
+  // Derive analyze status from global jobs
+  const analyzeJobs = jobs.filter(j => j.kind === "analyze");
+  const isAnalyzing = (projectId) => analyzeJobs.some(j => j.meta && j.meta.projectId === projectId && j.status === "running");
+  const getAnalyzeError = (projectId) => {
+    const errJob = analyzeJobs.find(j => j.meta && j.meta.projectId === projectId && j.status === "error");
+    return errJob ? errJob : null;
+  };
+  const anyRunning = analyzeJobs.some(j => j.status === "running");
 
   const emptyForm = {
     title: "",
@@ -1035,124 +1475,6 @@ function ProjView({ projects, save, profile }) {
     setEdit(null);
   };
 
-  const analyze = async (idx) => {
-    setBusy(true);
-    setAnalyzeErr("");
-    setAnalyzingIdx(idx);
-    try {
-      const p = projects[idx];
-      const projectFiles = await loadProjectFiles(p.id);
-
-      const textPrompt = `You are a world-class film strategist who has programmed Sundance, Cannes, and advised A24. Analyze this project with extreme depth.
-
-COMPANY: ${profile.companyName} | ${profile.founders} | ${profile.location}
-Credits: ${profile.credits}
-Specialties: ${profile.specialties}
-Bio: ${profile.bio}
-
-PROJECT:
-Title: "${p.title}"
-Format: ${p.format}
-Genre: ${p.genre || "Not specified"}
-Stage: ${p.stage}
-Logline: ${p.logline || "Not provided"}
-Synopsis: ${p.synopsis || "Not provided"}
-Budget: ${p.budget || "Not specified"}
-Runtime: ${p.runtime || "Not specified"}
-Target Audience: ${p.targetAudience || "Not specified"}
-Themes: ${p.themes || "Not specified"}
-Team Notes: ${p.teamNotes || "Not specified"}
-
-${projectFiles.length > 0 ? "ATTACHED MATERIALS (review these carefully for deep analysis):\n" + projectFiles.map(f => "- " + f.name + " (" + f.category + ")").join("\n") + "\n\nUse the attached materials as the PRIMARY source for your analysis. Reference specific scenes, visuals, or content from them.\n" : ""}
-
-Respond ONLY with JSON (no markdown, no backticks):
-{
-  "artistic": {
-    "thematicCore": "3-4 sentences on the deepest thematic concerns. What questions does it ask?",
-    "narrativeApproach": "2-3 sentences on storytelling strategy, structure, perspective, tone",
-    "visualIdentity": "2-3 sentences on visual/aesthetic language. Reference specific styles or filmmakers",
-    "artisticLineage": "2-3 sentences on what films, artists, or traditions this is in conversation with",
-    "culturalSignificance": "2-3 sentences on why this story matters NOW"
-  },
-  "market": {
-    "comparables": "3-5 comparable films with rationale",
-    "festivalStrategy": "3-4 sentences naming specific festivals and sections",
-    "audienceProfile": "2-3 sentences on core and secondary audiences",
-    "distributionAngle": "2-3 sentences on distribution strategy",
-    "marketPositioning": "2-3 sentences on unique selling proposition",
-    "grantFitProfile": "2-3 sentences on what funding bodies would be receptive"
-  },
-  "strategy": {
-    "strengths": "3-4 points on competitive strengths",
-    "risks": "2-3 points on potential concerns with mitigations",
-    "keyPhrasing": "5-8 specific phrases that should appear in applications",
-    "submissionTiming": "2-3 sentences on optimal timing",
-    "idealOpportunityTypes": "ranked list of opportunity types with rationale"
-  }
-}
-
-Be brutally specific to THIS project only. No generic advice.`;
-
-      let messageContent;
-      if (projectFiles.length > 0) {
-        const blocks = [{ type: "text", text: textPrompt }];
-        for (const f of projectFiles) {
-          if (f.isText) {
-            blocks.push({
-              type: "text",
-              text: "\n--- " + f.name + " (" + f.category + ") ---\n" + f.data
-            });
-          } else if (f.mediaType === "application/pdf") {
-            blocks.push({
-              type: "document",
-              source: {
-                type: "base64",
-                media_type: "application/pdf",
-                data: f.data
-              }
-            });
-          } else if (f.mediaType.startsWith("image/")) {
-            blocks.push({
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: f.mediaType,
-                data: f.data
-              }
-            });
-          }
-        }
-        messageContent = blocks;
-      } else {
-        messageContent = textPrompt;
-      }
-
-      const txt = await askClaude(messageContent);
-      const result = extractJSON(txt);
-      if (result) {
-        const updated = [...projects];
-        updated[idx] = {
-          ...updated[idx],
-          analysis: {
-            ...result,
-            analyzedAt: new Date().toISOString(),
-            basedOnFiles: projectFiles.length
-          }
-        };
-        save(updated);
-        setViewAn(idx);
-      } else {
-        setAnalyzeErr("Got a response but couldn't parse it as JSON. Try again, or check the browser console for the raw response.");
-        console.error("Raw AI response:", txt);
-      }
-    } catch (e) {
-      console.error("Analyze error:", e);
-      setAnalyzeErr(e.message || "Analysis failed. Check the browser console for details.");
-    } finally {
-      setBusy(false);
-      setAnalyzingIdx(null);
-    }
-  };
 
   /* ── VIEW ANALYSIS ── */
   if (viewAn !== null && projects[viewAn]) {
@@ -1179,23 +1501,23 @@ Be brutally specific to THIS project only. No generic advice.`;
           <Btn
             variant="teal"
             small
-            onClick={() => analyze(viewAn)}
-            disabled={busy}
-          >{busy ? "Analyzing..." : "↻ Re-analyze"}</Btn>
+            onClick={() => runAnalyze(p.id)}
+            disabled={isAnalyzing(p.id)}
+          >{isAnalyzing(p.id) ? "Analyzing..." : "↻ Re-analyze"}</Btn>
         </div>
 
-        {busy && <Loader text="Running deep analysis with your uploaded materials..." />}
+        {isAnalyzing(p.id) && <Loader text="Running deep analysis with your uploaded materials..." />}
 
-        {!a && !busy && (
+        {!a && !isAnalyzing(p.id) && (
           <Blank
             icon="🔬"
             title="Not analyzed"
             sub="Run AI analysis to generate artistic and market intelligence."
-            action={<Btn onClick={() => analyze(viewAn)}>Analyze</Btn>}
+            action={<Btn onClick={() => runAnalyze(p.id)}>Analyze</Btn>}
           />
         )}
 
-        {a && !busy && (
+        {a && !isAnalyzing(p.id) && (
           <div>
             <Card style={{ marginBottom: "16px", borderColor: C.pp + "30" }}>
               <h3 style={{
@@ -1549,23 +1871,28 @@ Be brutally specific to THIS project only. No generic advice.`;
         <Btn onClick={() => openEdit("new")}>+ New Project</Btn>
       </div>
 
-      {busy && (
+      {anyRunning && (
         <Card style={{ marginBottom: "16px", borderColor: C.tl + "50" }}>
-          <Loader text="Running deep analysis... this can take 30-90 seconds with attached files" />
+          <p style={{ fontSize: "13px", color: C.tl, fontFamily: FN.m, marginBottom: "8px" }}>
+            ⏳ {analyzeJobs.filter(j => j.status === "running").length} analysis running in background — feel free to switch tabs
+          </p>
+          {analyzeJobs.filter(j => j.status === "running").map(j => (
+            <p key={j.id} style={{ fontSize: "12px", color: C.tm, marginTop: "4px" }}>• {j.label}</p>
+          ))}
         </Card>
       )}
 
-      {analyzeErr && (
-        <Card style={{ marginBottom: "16px", borderColor: C.dn + "50", background: C.dn + "08" }}>
+      {analyzeJobs.filter(j => j.status === "error").map(j => (
+        <Card key={j.id} style={{ marginBottom: "16px", borderColor: C.dn + "50", background: C.dn + "08" }}>
           <p style={{ fontSize: "13px", color: C.dn, marginBottom: "8px", fontWeight: 600 }}>
-            ⚠ Analysis failed
+            ⚠ Analysis failed: {j.label}
           </p>
           <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.6, marginBottom: "10px" }}>
-            {analyzeErr}
+            {j.error}
           </p>
-          <Btn variant="ghost" small onClick={() => setAnalyzeErr("")}>Dismiss</Btn>
+          <Btn variant="ghost" small onClick={() => dismissJob(j.id)}>Dismiss</Btn>
         </Card>
-      )}
+      ))}
 
       {!projects.length ? (
         <Blank
@@ -1641,9 +1968,9 @@ Be brutally specific to THIS project only. No generic advice.`;
                     <Btn
                       variant="teal"
                       small
-                      onClick={() => analyze(i)}
-                      disabled={busy}
-                    >{analyzingIdx === i ? "⏳ Analyzing..." : "🔬 Analyze"}</Btn>
+                      onClick={() => runAnalyze(p.id)}
+                      disabled={isAnalyzing(p.id)}
+                    >{isAnalyzing(p.id) ? "⏳ Analyzing..." : "🔬 Analyze"}</Btn>
                   )}
                 </div>
               </div>
@@ -1659,94 +1986,34 @@ Be brutally specific to THIS project only. No generic advice.`;
    DISCOVER
    ═══════════════════════════════════════════════════ */
 
-function DiscView({ profile, projects, opps, save }) {
-  const [filter, setFilter] = useState("All");
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const [sel, setSel] = useState(projects.length > 0 ? 0 : -1);
-  const [err, setErr] = useState("");
+function DiscView({
+  profile, projects, opps, save,
+  jobs, runSearch, dismissJob,
+  searchResults, setSearchResults,
+  searchProjectIdx, setSearchProjectIdx,
+  searchFilter, setSearchFilter,
+  searchQuery, setSearchQuery,
+  searchError, setSearchError
+}) {
+  // Derive busy state and errors from global jobs
+  const searchJobs = jobs.filter(j => j.kind === "search");
+  const busy = searchJobs.some(j => j.status === "running");
+  const errJobs = searchJobs.filter(j => j.status === "error");
+  const sel = searchProjectIdx;
+  const filter = searchFilter;
+  const query = searchQuery;
+  const results = searchResults;
+  const err = searchError;
+  const setSel = setSearchProjectIdx;
+  const setFilter = setSearchFilter;
+  const setQuery = setSearchQuery;
 
-  const search = async () => {
+  const search = () => {
     if (!projects.length) {
-      setErr("Add a project first.");
+      setSearchError("Add a project first.");
       return;
     }
-    setBusy(true);
-    setErr("");
-    setResults([]);
-
-    const p = projects[sel] || projects[0];
-    const a = p.analysis;
-    const tf = filter === "All"
-      ? "grants, festivals, labs, fellowships, and residencies"
-      : filter.toLowerCase();
-
-    // Stage-specific eligibility rules
-    const stageRules = {
-      "Development": "Only return opportunities that accept projects IN DEVELOPMENT (screenplay stage, not yet in production). This includes: screenwriting grants, script development funds, writers labs, development fellowships, story/screenplay competitions, early-stage incubators, and development residencies. DO NOT return film festivals (which require finished films), completed-film awards, distribution grants, post-production funds, or anything requiring an existing cut or finished work.",
-      "Pre-Production": "Only return opportunities that accept projects in PRE-PRODUCTION (script is locked, preparing to shoot). This includes: production financing grants, pre-production labs, production fellowships, producer labs, and packaging/financing programs. DO NOT return completed-film festivals, post-production funds, or development-only grants.",
-      "Production": "Only return opportunities that accept projects currently IN PRODUCTION (actively shooting). This includes: production grants, in-progress financing, and labs accepting projects mid-production. DO NOT return completed-film festivals, development-only grants, or post-production funds.",
-      "Post-Production": "Only return opportunities that accept projects in POST-PRODUCTION (shot but not finished). This includes: finishing funds, post-production grants, work-in-progress showcases, rough-cut labs, and WIP festivals. DO NOT return completed-film festivals requiring a locked final cut (unless they have a WIP section), development grants, or production-only funds.",
-      "Completed": "Only return opportunities for FINISHED films. This includes: film festivals (premiere and subsequent), distribution grants, completed-film awards, and release support programs. DO NOT return development grants, production funds, or opportunities requiring in-progress work."
-    };
-
-    const stageRule = stageRules[p.stage] || "Match opportunities appropriate to the project's current stage.";
-
-    let analysisContext = "";
-    if (a) {
-      analysisContext = "\nPROJECT INTELLIGENCE:\n"
-        + "Artistic: " + JSON.stringify(a.artistic || {}) + "\n"
-        + "Market: " + JSON.stringify(a.market || {}) + "\n"
-        + "Strategy: " + JSON.stringify(a.strategy || {}) + "\n\n"
-        + "Use this intelligence to find opportunities aligned with the project's specific artistic and market profile.";
-    }
-
-    const prompt = `You are an expert film industry researcher. Search for REAL, currently open or upcoming ${tf} for this project.
-
-COMPANY: ${profile.companyName} | ${profile.bio} | ${profile.location}
-PROJECT: "${p.title}"
-Format: ${p.format}
-Genre: ${p.genre || "?"}
-Stage: ${p.stage}
-Logline: ${p.logline || "?"}
-Themes: ${p.themes || "?"}${analysisContext}
-${query.trim() ? "\nAdditional focus: " + query : ""}
-
-🚨 CRITICAL STAGE REQUIREMENT (NON-NEGOTIABLE):
-This project is currently in "${p.stage}" stage. ${stageRule}
-
-Before returning ANY opportunity, verify it explicitly accepts projects in "${p.stage}" stage. If an opportunity requires a different stage, EXCLUDE IT. It is better to return fewer results than to include mismatched opportunities.
-
-Respond ONLY with a JSON array. Each object must have:
-- "name", "organization"
-- "type" ("Grant"|"Festival"|"Lab"|"Fellowship"|"Residency")
-- "deadline" (specific date like "June 15, 2026" when available)
-- "amount", "submissionFee", "url"
-- "description" (2-3 sentences)
-- "stageEligibility" (explicit quote or paraphrase from the opportunity confirming it accepts ${p.stage}-stage projects)
-- "matchReason" (why this fits THIS specific project — reference the analysis if provided)
-- "matchStrength" ("strong"|"moderate"|"speculative")
-- "eligibility" (other key requirements beyond stage)
-
-Find 6-12 real opportunities that STRICTLY match the project's current stage. Quality over quantity. Every single result must be appropriate for a project in "${p.stage}" stage.`;
-
-    try {
-      const txt = await askClaude(prompt, true);
-      const parsed = extractJSON(txt);
-      if (parsed && Array.isArray(parsed)) {
-        const order = { strong: 0, moderate: 1, speculative: 2 };
-        const sorted = [...parsed].sort(
-          (a, b) => (order[a.matchStrength] || 2) - (order[b.matchStrength] || 2)
-        );
-        setResults(sorted);
-      } else {
-        setErr("Couldn't parse results.");
-      }
-    } catch (e) {
-      setErr("Search failed.");
-    }
-    setBusy(false);
+    runSearch(sel, filter, query);
   };
 
   const isSaved = (o) => opps.some(
@@ -2298,115 +2565,22 @@ function DeadView({ deadlines, opps, save, go }) {
    APPLICATIONS
    ═══════════════════════════════════════════════════ */
 
-function AppsView({ profile, projects, opps, apps, save, pay }) {
-  const [busy, setBusy] = useState(false);
+function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate, dismissJob }) {
   const [selO, setSelO] = useState(null);
   const [selP, setSelP] = useState(0);
   const [view, setView] = useState(null);
-  const [err, setErr] = useState("");
   const [rvw, setRvw] = useState(null);
   const [limitOk, setLimitOk] = useState(false);
   const [submitMdl, setSubmitMdl] = useState(null);
 
-  const generate = async () => {
+  // Derive busy + errors from global jobs
+  const generateJobs = jobs.filter(j => j.kind === "generate");
+  const busy = generateJobs.some(j => j.status === "running");
+  const errJobs = generateJobs.filter(j => j.status === "error");
+
+  const generate = () => {
     if (selO === null || !projects[selP]) return;
-    setBusy(true);
-    setErr("");
-
-    const o = opps[selO];
-    const p = projects[selP];
-    const a = p.analysis;
-    const projectFiles = await loadProjectFiles(p.id);
-
-    let analysisContext = "";
-    if (a) {
-      analysisContext = "\nPROJECT INTELLIGENCE:\n" + JSON.stringify(a);
-    }
-
-    const textPrompt = `You are a world-class grant writer. Generate a complete, hand-tailored application.
-
-OPPORTUNITY: ${o.name} | ${o.organization} | ${o.type} | ${o.description}
-COMPANY: ${profile.companyName} | ${profile.founders} | ${profile.location} | ${profile.bio} | ${profile.credits}
-PROJECT: "${p.title}" | ${p.format} | ${p.genre || "?"} | ${p.stage} | ${p.logline || "?"} | ${p.synopsis || "?"} | ${p.themes || "?"}${analysisContext}
-
-${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review the attached files (screenplay, pitch deck, etc.) and reference specific content from them in the application." : ""}
-
-Respond ONLY with JSON (no markdown):
-{
-  "projectStatement": "2-3 para",
-  "artistStatement": "1-2 para",
-  "budgetJustification": "...",
-  "impactStatement": "...",
-  "timeline": "...",
-  "coverLetter": "...",
-  "strategicNotes": "internal notes only"
-}`;
-
-    try {
-      let messageContent;
-      if (projectFiles.length > 0) {
-        const blocks = [{ type: "text", text: textPrompt }];
-        for (const f of projectFiles) {
-          if (f.isText) {
-            blocks.push({
-              type: "text",
-              text: "\n--- " + f.name + " ---\n" + f.data
-            });
-          } else if (f.mediaType === "application/pdf") {
-            blocks.push({
-              type: "document",
-              source: {
-                type: "base64",
-                media_type: "application/pdf",
-                data: f.data
-              }
-            });
-          } else if (f.mediaType.startsWith("image/")) {
-            blocks.push({
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: f.mediaType,
-                data: f.data
-              }
-            });
-          }
-        }
-        messageContent = blocks;
-      } else {
-        messageContent = textPrompt;
-      }
-
-      const txt = await askClaude(messageContent);
-      const parsed = extractJSON(txt);
-      if (parsed) {
-        const cost = parseFloat((o.submissionFee || "0").replace(/[^0-9.]/g, "")) || 0;
-        const app = {
-          id: Date.now().toString(),
-          oppName: o.name,
-          oppOrg: o.organization,
-          oppUrl: o.url,
-          projTitle: p.title,
-          hadAnalysis: !!a,
-          hadFiles: projectFiles.length > 0,
-          status: "draft",
-          cost: cost,
-          feeLabel: o.submissionFee || "?",
-          payId: pay.defaultMethodId,
-          createdAt: new Date().toISOString(),
-          content: parsed,
-          checks: { content: false, cost: false, ready: false }
-        };
-        const n = [...apps, app];
-        save(n);
-        setView(n.length - 1);
-      } else {
-        setErr("Parse failed.");
-      }
-    } catch (e) {
-      setErr("Generation failed.");
-    }
-    setBusy(false);
+    runGenerate(selO, selP);
   };
 
   const setCheck = (idx, key, val) => {
@@ -2808,14 +2982,26 @@ Respond ONLY with JSON (no markdown):
         </div>
         <Btn
           onClick={generate}
-          disabled={busy || selO === null || !projects.length}
-        >{busy ? "Generating..." : "◆ Generate"}</Btn>
-        {err && (
-          <p style={{ color: C.dn, fontSize: "13px", marginTop: "10px" }}>{err}</p>
+          disabled={selO === null || !projects.length}
+        >◆ Generate</Btn>
+        {busy && (
+          <p style={{ color: C.tl, fontSize: "12px", marginTop: "10px" }}>
+            ⏳ {generateJobs.filter(j => j.status === "running").length} generation(s) running in background. You can keep working.
+          </p>
         )}
+        {errJobs.map(j => (
+          <div key={j.id} style={{
+            marginTop: "10px",
+            padding: "10px 12px",
+            background: C.dn + "10",
+            border: "1px solid " + C.dn + "30",
+            borderRadius: "6px"
+          }}>
+            <p style={{ color: C.dn, fontSize: "12px", marginBottom: "6px" }}>⚠ {j.label}: {j.error}</p>
+            <Btn variant="ghost" small onClick={() => dismissJob(j.id)}>Dismiss</Btn>
+          </div>
+        ))}
       </Card>
-
-      {busy && <Loader text="Crafting tailored application with project materials..." />}
 
       {!apps.length && !busy ? (
         <Blank
