@@ -2402,7 +2402,8 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
             </h2>
             <p style={{ color: C.tm, fontSize: "12px" }}>
               Intelligence Report
-              {a && a.basedOnFiles > 0 && " · Based on " + a.basedOnFiles + " uploaded file(s)"}
+              {a && a.analyzedAt && " · Last analyzed " + new Date(a.analyzedAt).toLocaleString()}
+              {a && a.basedOnFiles > 0 && " · " + a.basedOnFiles + " file(s)"}
             </p>
           </div>
           <Btn
@@ -2506,7 +2507,7 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
         )}
 
         {a && (
-          <div>
+          <div key={a.analyzedAt || "analysis"}>
             {a.team && (
               <Card style={{ marginBottom: "16px", borderColor: C.ok + "40", background: C.ok + "06" }}>
                 <h3 style={{
