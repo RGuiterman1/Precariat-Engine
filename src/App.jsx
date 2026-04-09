@@ -343,7 +343,7 @@ function InfoBlock({ label, content, color }) {
    HELPERS
    ═══════════════════════════════════════════════════ */
 
-async function askClaude(content, search) {
+async function askClaude(content, search, attempt = 0) {
   const apiKey = localStorage.getItem("poe_api_key") || "";
   if (!apiKey) {
     throw new Error("No API key set. Go to the Profile tab and add your Anthropic API key.");
@@ -354,32 +354,57 @@ async function askClaude(content, search) {
   }];
   const body = {
     model: "claude-sonnet-4-20250514",
-    max_tokens: 4096,
+    max_tokens: 8192,
     messages: messages
   };
   if (search) {
     body.tools = [{ type: "web_search_20250305", name: "web_search" }];
   }
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true"
-    },
-    body: JSON.stringify(body)
-  });
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
+      body: JSON.stringify(body)
+    });
+  } catch (networkErr) {
+    // Network failure — retry once after a short delay
+    if (attempt < 1) {
+      await new Promise(r => setTimeout(r, 2000));
+      return askClaude(content, search, attempt + 1);
+    }
+    throw new Error("Network error: " + (networkErr.message || "could not reach API"));
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     const msg = err.error?.message || err.error || ("API request failed: " + res.status);
+    // Auto-retry rate limits and overloaded errors
+    if ((res.status === 429 || res.status === 529 || res.status === 503) && attempt < 2) {
+      const waitMs = (attempt + 1) * 5000; // 5s, then 10s
+      console.warn("Retrying after " + waitMs + "ms due to " + res.status);
+      await new Promise(r => setTimeout(r, waitMs));
+      return askClaude(content, search, attempt + 1);
+    }
+    if (res.status === 429) throw new Error("Rate limited by Anthropic. Try again in a minute, or run fewer operations in parallel.");
+    if (res.status === 529) throw new Error("Anthropic API is overloaded. Try again shortly.");
+    if (res.status === 400 && msg.includes("credit")) throw new Error("Out of API credits. Add more at console.anthropic.com.");
     throw new Error(msg);
   }
   const data = await res.json();
-  return (data.content || [])
+  const stopReason = data.stop_reason;
+  const text = (data.content || [])
     .map(b => b.type === "text" ? b.text : "")
     .filter(Boolean)
     .join("\n");
+  if (!text) {
+    throw new Error("Empty response from API (stop_reason: " + (stopReason || "unknown") + ")");
+  }
+  return text;
 }
 
 function extractJSON(text) {
@@ -1298,6 +1323,24 @@ Respond ONLY with JSON (no markdown):
     }
   };
 
+  // Retry an errored job by re-running its original operation
+  const retryJob = (jobId) => {
+    const job = jobs.find(j => j.id === jobId);
+    if (!job) return;
+    removeJob(jobId);
+    // Dispatch based on job kind
+    if (job.kind === "analyze" && job.meta?.projectId) {
+      runAnalyze(job.meta.projectId);
+    } else if (job.kind === "refresh" && job.meta?.appId) {
+      runRefreshApp(job.meta.appId, job.meta.mode || "augment");
+    } else if (job.kind === "generate") {
+      // Generate needs original opp/project indices which aren't stable — user should redo manually
+      console.warn("Generate jobs cannot be auto-retried, user should click Generate again");
+    } else if (job.kind === "search") {
+      console.warn("Search jobs should be retriggered manually from Discover tab");
+    }
+  };
+
   if (!ready) {
     return (
       <div style={{
@@ -1429,67 +1472,31 @@ Respond ONLY with JSON (no markdown):
           {jobs.length > 0 && (
             <div style={{
               marginBottom: "12px",
-              padding: "10px",
-              background: C.tl + "10",
-              border: "1px solid " + C.tl + "30",
-              borderRadius: "6px"
+              padding: "10px 12px",
+              background: jobs.some(j => j.status === "error") ? C.dn + "15" : C.tl + "15",
+              border: "1px solid " + (jobs.some(j => j.status === "error") ? C.dn : C.tl),
+              borderRadius: "6px",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px"
             }}>
+              <span style={{
+                display: "inline-block",
+                width: "8px",
+                height: "8px",
+                background: jobs.some(j => j.status === "running") ? C.tl : C.dn,
+                borderRadius: "50%",
+                animation: jobs.some(j => j.status === "running") ? "pulse 1.5s infinite" : "none"
+              }} />
               <p style={{
                 fontFamily: FN.m,
-                fontSize: "9px",
-                color: C.tl,
-                letterSpacing: "0.06em",
-                marginBottom: "6px",
-                display: "flex",
-                alignItems: "center",
-                gap: "6px"
+                fontSize: "11px",
+                color: jobs.some(j => j.status === "error") ? C.dn : C.tl,
+                fontWeight: 600
               }}>
-                <span style={{
-                  display: "inline-block",
-                  width: "6px",
-                  height: "6px",
-                  background: jobs.some(j => j.status === "running") ? C.tl : C.dn,
-                  borderRadius: "50%",
-                  animation: jobs.some(j => j.status === "running") ? "pulse 1.5s infinite" : "none"
-                }} />
                 {jobs.filter(j => j.status === "running").length} RUNNING
-                {jobs.some(j => j.status === "error") && " · " + jobs.filter(j => j.status === "error").length + " ERROR"}
+                {jobs.some(j => j.status === "error") && " · " + jobs.filter(j => j.status === "error").length + " ERR"}
               </p>
-              {jobs.slice(0, 3).map(j => (
-                <div key={j.id} style={{ marginBottom: "4px" }}>
-                  <p style={{
-                    fontSize: "10px",
-                    color: j.status === "error" ? C.dn : C.tx,
-                    lineHeight: 1.4,
-                    wordBreak: "break-word"
-                  }}>
-                    {j.status === "running" ? "⏳ " : "⚠ "}
-                    {j.label.length > 32 ? j.label.slice(0, 32) + "..." : j.label}
-                  </p>
-                  {j.status === "error" && (
-                    <div style={{ display: "flex", gap: "6px", marginTop: "2px" }}>
-                      <button
-                        onClick={() => dismissJob(j.id)}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          color: C.tm,
-                          fontSize: "9px",
-                          fontFamily: FN.m,
-                          cursor: "pointer",
-                          padding: 0,
-                          textDecoration: "underline"
-                        }}
-                      >dismiss</button>
-                    </div>
-                  )}
-                </div>
-              ))}
-              {jobs.length > 3 && (
-                <p style={{ fontSize: "9px", color: C.tm, marginTop: "4px" }}>
-                  +{jobs.length - 3} more
-                </p>
-              )}
             </div>
           )}
           <p style={{
@@ -1518,6 +1525,108 @@ Respond ONLY with JSON (no markdown):
         padding: "32px 40px",
         maxWidth: "960px"
       }}>
+        {jobs.length > 0 && (
+          <div style={{
+            marginBottom: "24px",
+            background: jobs.some(j => j.status === "error") ? C.dn + "10" : C.tl + "10",
+            border: "1px solid " + (jobs.some(j => j.status === "error") ? C.dn + "50" : C.tl + "50"),
+            borderRadius: "12px",
+            padding: "16px 20px",
+            position: "sticky",
+            top: "16px",
+            zIndex: 20,
+            backdropFilter: "blur(8px)"
+          }}>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              marginBottom: "10px"
+            }}>
+              <span style={{
+                display: "inline-block",
+                width: "10px",
+                height: "10px",
+                borderRadius: "50%",
+                background: jobs.some(j => j.status === "running") ? C.tl : C.dn,
+                animation: jobs.some(j => j.status === "running") ? "pulse 1.5s infinite" : "none"
+              }} />
+              <h3 style={{
+                fontFamily: FN.d,
+                fontSize: "17px",
+                fontStyle: "italic",
+                color: jobs.some(j => j.status === "error") ? C.dn : C.tl
+              }}>
+                Background Jobs — {jobs.filter(j => j.status === "running").length} running
+                {jobs.some(j => j.status === "error") && ", " + jobs.filter(j => j.status === "error").length + " failed"}
+              </h3>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              {jobs.map(j => (
+                <div key={j.id} style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "12px",
+                  padding: "10px 14px",
+                  background: C.bg,
+                  borderRadius: "8px",
+                  borderLeft: "3px solid " + (j.status === "error" ? C.dn : C.tl)
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{
+                      fontSize: "13px",
+                      color: j.status === "error" ? C.dn : C.tx,
+                      marginBottom: j.error ? "4px" : 0,
+                      fontWeight: 500
+                    }}>
+                      {j.status === "running" ? "⏳ " : "⚠ "}
+                      {j.label}
+                    </p>
+                    {j.error && (
+                      <p style={{ fontSize: "11px", color: C.tm, lineHeight: 1.4 }}>
+                        {j.error}
+                      </p>
+                    )}
+                  </div>
+                  {j.status === "error" && (
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      {(j.kind === "analyze" || j.kind === "refresh") && (
+                        <Btn variant="teal" small onClick={() => retryJob(j.id)}>↻ Retry</Btn>
+                      )}
+                      <Btn variant="ghost" small onClick={() => dismissJob(j.id)}>Dismiss</Btn>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            {jobs.filter(j => j.status === "error").length > 1 && (
+              <div style={{ marginTop: "10px", textAlign: "right" }}>
+                <Btn
+                  variant="ghost"
+                  small
+                  onClick={() => {
+                    jobs.filter(j => j.status === "error").forEach(j => dismissJob(j.id));
+                  }}
+                >Dismiss All Errors</Btn>
+                <Btn
+                  variant="teal"
+                  small
+                  onClick={async () => {
+                    const errored = jobs.filter(j => j.status === "error" && (j.kind === "analyze" || j.kind === "refresh"));
+                    for (const j of errored) {
+                      retryJob(j.id);
+                      // Small stagger so we don't immediately hit rate limits
+                      await new Promise(r => setTimeout(r, 500));
+                    }
+                  }}
+                  style={{ marginLeft: "8px" }}
+                >↻ Retry All</Btn>
+              </div>
+            )}
+          </div>
+        )}
+
         {tab === "dash" && (
           <DashView
             profile={profile}
@@ -1974,10 +2083,13 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
                 <Btn
                   variant="teal"
                   small
-                  onClick={() => {
-                    staleForThis.forEach(ap => runRefreshApp(ap.id, "augment"));
+                  onClick={async () => {
+                    // Run sequentially to avoid rate limits and errors
+                    for (const ap of staleForThis) {
+                      await runRefreshApp(ap.id, "augment");
+                    }
                   }}
-                >✨ Augment All</Btn>
+                >✨ Augment All (Sequential)</Btn>
               </div>
             </Card>
           );
