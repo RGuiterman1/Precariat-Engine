@@ -357,7 +357,7 @@ async function askClaude(content, search, attempt = 0) {
   }];
   const body = {
     model: "claude-sonnet-4-20250514",
-    max_tokens: 8192,
+    max_tokens: 16000,
     messages: messages
   };
   if (search) {
@@ -376,7 +376,6 @@ async function askClaude(content, search, attempt = 0) {
       body: JSON.stringify(body)
     });
   } catch (networkErr) {
-    // Network failure — retry once after a short delay
     if (attempt < 1) {
       await new Promise(r => setTimeout(r, 2000));
       return askClaude(content, search, attempt + 1);
@@ -386,9 +385,8 @@ async function askClaude(content, search, attempt = 0) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     const msg = err.error?.message || err.error || ("API request failed: " + res.status);
-    // Auto-retry rate limits and overloaded errors
     if ((res.status === 429 || res.status === 529 || res.status === 503) && attempt < 2) {
-      const waitMs = (attempt + 1) * 5000; // 5s, then 10s
+      const waitMs = (attempt + 1) * 5000;
       console.warn("Retrying after " + waitMs + "ms due to " + res.status);
       await new Promise(r => setTimeout(r, waitMs));
       return askClaude(content, search, attempt + 1);
@@ -407,19 +405,77 @@ async function askClaude(content, search, attempt = 0) {
   if (!text) {
     throw new Error("Empty response from API (stop_reason: " + (stopReason || "unknown") + ")");
   }
+  // Detect truncation — response hit the max_tokens ceiling mid-JSON
+  if (stopReason === "max_tokens") {
+    console.warn("Response truncated at max_tokens. Text length:", text.length);
+    throw new Error("Response hit 16k token limit. The prompt or AI response is too large. Try reducing team notes, using fewer attached files, or retrying.");
+  }
   return text;
 }
 
 function extractJSON(text) {
-  const clean = text.replace(/```json|```/g, "").trim();
-  const arr = clean.match(/\[[\s\S]*\]/);
-  if (arr) {
-    try { return JSON.parse(arr[0]); } catch (e) {}
+  // Strip markdown fences
+  let clean = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+
+  // Best case: whole thing parses
+  try {
+    return JSON.parse(clean);
+  } catch (e) {}
+
+  // Find outermost {...} or [...] via proper brace matching (handles nesting + strings)
+  const findOutermost = (str, openChar, closeChar) => {
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+      if (escape) { escape = false; continue; }
+      if (ch === "\\") { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === openChar) {
+        if (start === -1) start = i;
+        depth++;
+      } else if (ch === closeChar) {
+        depth--;
+        if (depth === 0 && start !== -1) {
+          return str.slice(start, i + 1);
+        }
+      }
+    }
+    if (start !== -1) return str.slice(start);
+    return null;
+  };
+
+  // Try object extraction
+  const objCandidate = findOutermost(clean, "{", "}");
+  if (objCandidate) {
+    try {
+      return JSON.parse(objCandidate);
+    } catch (e) {
+      // Repair: strip trailing commas
+      const repaired = objCandidate.replace(/,(\s*[}\]])/g, "$1");
+      try {
+        return JSON.parse(repaired);
+      } catch (e2) {}
+    }
   }
-  const obj = clean.match(/\{[\s\S]*\}/);
-  if (obj) {
-    try { return JSON.parse(obj[0]); } catch (e) {}
+
+  // Try array extraction
+  const arrCandidate = findOutermost(clean, "[", "]");
+  if (arrCandidate) {
+    try {
+      return JSON.parse(arrCandidate);
+    } catch (e) {
+      const repaired = arrCandidate.replace(/,(\s*[}\]])/g, "$1");
+      try {
+        return JSON.parse(repaired);
+      } catch (e2) {}
+    }
   }
+
+  console.error("extractJSON failed. Text preview:", clean.slice(0, 500));
   return null;
 }
 
