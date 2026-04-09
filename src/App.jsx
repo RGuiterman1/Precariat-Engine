@@ -762,6 +762,25 @@ Be brutally specific to THIS project only. No generic advice.`;
 
     const stageRule = stageRules[p.stage] || "Match opportunities appropriate to the project's current stage.";
 
+    // Build exclusion list from existing applications FOR THIS PROJECT ONLY
+    // (same opportunity can be applied to with different projects)
+    const currentApps = appsRef.current;
+    const projectApps = currentApps.filter(ap => ap.projTitle === p.title);
+    const submittedNames = projectApps
+      .filter(ap => ap.status === "submitted")
+      .map(ap => ap.oppName + " — " + ap.oppOrg);
+    const draftedNames = projectApps
+      .filter(ap => ap.status === "draft" || ap.status === "approved")
+      .map(ap => ap.oppName + " — " + ap.oppOrg);
+    const exclusionList = [...submittedNames, ...draftedNames];
+
+    let exclusionContext = "";
+    if (exclusionList.length > 0) {
+      exclusionContext = "\n\n🚫 ALREADY APPLIED WITH THIS PROJECT — DO NOT INCLUDE THESE IN RESULTS:\n"
+        + exclusionList.map(n => "- " + n).join("\n")
+        + "\n\nThe user has existing applications for \"" + p.title + "\" with the opportunities above. EXCLUDE them entirely from your search results. Find NEW opportunities only. Note: opportunities the user has applied to with OTHER projects are still eligible — only exclude ones tied to this specific project.";
+    }
+
     let analysisContext = "";
     if (a) {
       analysisContext = "\nPROJECT INTELLIGENCE:\n"
@@ -780,7 +799,7 @@ Format: ${p.format}
 Genre: ${p.genre || "?"}
 Stage: ${p.stage}
 Logline: ${p.logline || "?"}
-Themes: ${p.themes || "?"}${analysisContext}
+Themes: ${p.themes || "?"}${analysisContext}${exclusionContext}
 ${query && query.trim() ? "\nAdditional focus: " + query : ""}
 
 🚨 CRITICAL STAGE REQUIREMENT (NON-NEGOTIABLE):
@@ -805,8 +824,19 @@ Find 6-12 real opportunities that STRICTLY match the project's current stage. Qu
       const txt = await askClaude(prompt, true);
       const parsed = extractJSON(txt);
       if (parsed && Array.isArray(parsed)) {
+        // Hard client-side filter: drop any that already exist as submitted apps FOR THIS PROJECT
+        // (belt-and-suspenders safety in case the AI ignored the exclusion list)
+        const submittedSet = new Set(
+          projectApps
+            .filter(ap => ap.status === "submitted")
+            .map(ap => (ap.oppName || "").toLowerCase().trim() + "|" + (ap.oppOrg || "").toLowerCase().trim())
+        );
+        const filtered = parsed.filter(o => {
+          const key = (o.name || "").toLowerCase().trim() + "|" + (o.organization || "").toLowerCase().trim();
+          return !submittedSet.has(key);
+        });
         const order = { strong: 0, moderate: 1, speculative: 2 };
-        const sorted = [...parsed].sort(
+        const sorted = [...filtered].sort(
           (a, b) => (order[a.matchStrength] || 2) - (order[b.matchStrength] || 2)
         );
         setSearchResults(sorted);
@@ -1312,6 +1342,7 @@ Respond ONLY with JSON (no markdown):
             projects={projects}
             opps={opps}
             save={sOpps}
+            apps={apps}
             jobs={jobs}
             runSearch={runSearch}
             searchResults={searchResults}
@@ -2225,7 +2256,7 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
    ═══════════════════════════════════════════════════ */
 
 function DiscView({
-  profile, projects, opps, save,
+  profile, projects, opps, save, apps,
   jobs, runSearch, dismissJob,
   searchResults, setSearchResults,
   searchProjectIdx, setSearchProjectIdx,
@@ -2294,17 +2325,28 @@ function DiscView({
         </Card>
       )}
 
-      {selectedProj && (
-        <Card style={{
-          marginBottom: "16px",
-          borderColor: C.pp + "30",
-          background: C.pp + "06"
-        }}>
-          <p style={{ fontSize: "13px", color: C.tx, lineHeight: 1.5 }}>
-            🎯 Searching for opportunities that accept projects in <strong style={{ color: C.pp }}>{selectedProj.stage}</strong> stage only. Results for other stages will be excluded.
-          </p>
-        </Card>
-      )}
+      {selectedProj && (() => {
+        const existingCount = (apps || []).filter(ap =>
+          ap.projTitle === selectedProj.title &&
+          (ap.status === "submitted" || ap.status === "approved" || ap.status === "draft")
+        ).length;
+        return (
+          <Card style={{
+            marginBottom: "16px",
+            borderColor: C.pp + "30",
+            background: C.pp + "06"
+          }}>
+            <p style={{ fontSize: "13px", color: C.tx, lineHeight: 1.5 }}>
+              🎯 Searching for opportunities that accept projects in <strong style={{ color: C.pp }}>{selectedProj.stage}</strong> stage only. Results for other stages will be excluded.
+            </p>
+            {existingCount > 0 && (
+              <p style={{ fontSize: "12px", color: C.tm, lineHeight: 1.5, marginTop: "8px" }}>
+                🚫 Also excluding <strong style={{ color: C.tx }}>{existingCount} opportunit{existingCount === 1 ? "y" : "ies"}</strong> you've already applied to <strong style={{ color: C.tx }}>with this project</strong>. The same opportunity can still appear for other projects.
+              </p>
+            )}
+          </Card>
+        );
+      })()}
 
       <Card style={{ marginBottom: "20px" }}>
         <div style={{
@@ -2370,6 +2412,11 @@ function DiscView({
               moderate: C.wn,
               speculative: C.td
             };
+            const existingApp = apps && selectedProj && apps.find(ap =>
+              ap.projTitle === selectedProj.title &&
+              (ap.oppName || "").toLowerCase().trim() === (o.name || "").toLowerCase().trim() &&
+              (ap.oppOrg || "").toLowerCase().trim() === (o.organization || "").toLowerCase().trim()
+            );
             return (
               <Card key={i} style={{ marginBottom: "12px" }}>
                 <div style={{
@@ -2399,6 +2446,17 @@ function DiscView({
                       <Bdg color={mc[o.matchStrength] || C.td}>
                         {o.matchStrength}
                       </Bdg>
+                      {existingApp && (
+                        <Bdg color={
+                          existingApp.status === "submitted" ? C.ok :
+                          existingApp.status === "approved" ? C.ac :
+                          C.wn
+                        }>
+                          {existingApp.status === "submitted" ? "✓ SUBMITTED" :
+                           existingApp.status === "approved" ? "✓ APPROVED" :
+                           "⚠ DRAFTED"}
+                        </Bdg>
+                      )}
                       {o.submissionFee && o.submissionFee !== "Free" && o.submissionFee !== "$0" ? (
                         <Bdg color={C.wn}>Fee: {o.submissionFee}</Bdg>
                       ) : (
@@ -2813,6 +2871,7 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
   const [editingKey, setEditingKey] = useState(null);
   const [draftText, setDraftText] = useState("");
   const [refreshMdl, setRefreshMdl] = useState(null);
+  const [listFilter, setListFilter] = useState("all");
 
   // Derive busy + errors from global jobs
   const generateJobs = jobs.filter(j => j.kind === "generate");
@@ -3547,8 +3606,107 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
           sub="Generate from saved opportunities."
         />
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-          {apps.map((app, i) => (
+        <div>
+          {/* Summary strip */}
+          {(() => {
+            const counts = {
+              all: apps.length,
+              draft: apps.filter(a => a.status === "draft").length,
+              approved: apps.filter(a => a.status === "approved").length,
+              submitted: apps.filter(a => a.status === "submitted").length
+            };
+            const totalSubmitted = apps
+              .filter(a => a.status === "submitted")
+              .reduce((s, a) => s + (a.cost || 0), 0);
+            const filterOptions = [
+              { id: "all", label: "All", count: counts.all, color: C.tx },
+              { id: "draft", label: "Drafts", count: counts.draft, color: C.wn },
+              { id: "approved", label: "Approved", count: counts.approved, color: C.ac },
+              { id: "submitted", label: "Submitted", count: counts.submitted, color: C.ok }
+            ];
+            return (
+              <div>
+                <Card style={{ marginBottom: "14px" }}>
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(4, 1fr)",
+                    gap: "12px"
+                  }}>
+                    <div>
+                      <p style={{ ...LS, marginBottom: "4px" }}>TOTAL</p>
+                      <p style={{ fontFamily: FN.d, fontSize: "24px", fontStyle: "italic", color: C.tx }}>
+                        {counts.all}
+                      </p>
+                    </div>
+                    <div>
+                      <p style={{ ...LS, marginBottom: "4px" }}>SUBMITTED</p>
+                      <p style={{ fontFamily: FN.d, fontSize: "24px", fontStyle: "italic", color: C.ok }}>
+                        {counts.submitted}
+                      </p>
+                    </div>
+                    <div>
+                      <p style={{ ...LS, marginBottom: "4px" }}>TOTAL SPENT</p>
+                      <p style={{ fontFamily: FN.d, fontSize: "24px", fontStyle: "italic", color: C.wn }}>
+                        ${totalSubmitted.toFixed(2)}
+                      </p>
+                    </div>
+                    <div>
+                      <p style={{ ...LS, marginBottom: "4px" }}>STALE</p>
+                      <p style={{ fontFamily: FN.d, fontSize: "24px", fontStyle: "italic", color: C.wn }}>
+                        {apps.filter(isStale).length}
+                      </p>
+                    </div>
+                  </div>
+                </Card>
+
+                {/* Filter tabs */}
+                <div style={{
+                  display: "flex",
+                  gap: "6px",
+                  marginBottom: "14px",
+                  flexWrap: "wrap"
+                }}>
+                  {filterOptions.map(f => (
+                    <Btn
+                      key={f.id}
+                      variant={listFilter === f.id ? "primary" : "secondary"}
+                      small
+                      onClick={() => setListFilter(f.id)}
+                    >
+                      {f.label} ({f.count})
+                    </Btn>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {(() => {
+            const filtered = listFilter === "all"
+              ? apps
+              : apps.filter(a => a.status === listFilter);
+            // Sort: most recent first, using the most recent timestamp on each app
+            const sorted = [...filtered].sort((a, b) => {
+              const ta = new Date(a.submittedAt || a.refreshedAt || a.editedAt || a.createdAt).getTime();
+              const tb = new Date(b.submittedAt || b.refreshedAt || b.editedAt || b.createdAt).getTime();
+              return tb - ta;
+            });
+            if (sorted.length === 0) {
+              return (
+                <Blank
+                  icon="◆"
+                  title={"No " + listFilter + " applications"}
+                  sub={listFilter === "submitted"
+                    ? "Submitted applications will appear here for record-keeping."
+                    : "Switch filters or generate new applications above."}
+                />
+              );
+            }
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {sorted.map((app) => {
+                  const i = apps.indexOf(app);
+                  return (
             <Card
               key={app.id}
               onClick={() => setView(i)}
@@ -3585,7 +3743,9 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
                     )}
                   </div>
                   <p style={{ color: C.tm, fontSize: "12px" }}>
-                    {app.projTitle} · {new Date(app.createdAt).toLocaleDateString()}
+                    {app.projTitle} · {app.status === "submitted" && app.submittedAt
+                      ? "submitted " + new Date(app.submittedAt).toLocaleDateString()
+                      : "created " + new Date(app.createdAt).toLocaleDateString()}
                   </p>
                 </div>
                 <Bdg color={{ draft: C.wn, approved: C.ac, submitted: C.ok }[app.status]}>
@@ -3593,7 +3753,11 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
                 </Bdg>
               </div>
             </Card>
-          ))}
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
