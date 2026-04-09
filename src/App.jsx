@@ -23,7 +23,8 @@ const DEF_PROFILE = {
   contactPhone: "(917) 544-0654",
   contactName: "Ryan Guiterman",
   credits: "Canvas (2021) - Animated Horror - Annecy, Gravitas Ventures\nLoud & Longing (2023) - Drama/Thriller - Lighthouse IFF, Gravitas Ventures\nFor Marta (Short Film)",
-  specialties: "Animation, Horror, Genre Films, VFX, AI Technology, Independent Film"
+  specialties: "Animation, Horror, Genre Films, VFX, AI Technology, Independent Film",
+  connectedAccounts: []  // [{ name, identifier, url, notes }]
 };
 
 const DEF_PAY = {
@@ -1264,6 +1265,13 @@ APPLICANT
 
 🚨 These are the EXACT contact details selection committees should use to respond. You MUST include them in the application. Do not use placeholders, do not make up different contact info, do not omit them. The cover letter MUST include these details in a contact block (typically at the top below the letterhead OR at the close). If the application has a dedicated contact field (name/email/phone), use these exact values. If the applicant's company website shows different contact info, use the ones above — they are authoritative.
 
+🔗 CONNECTED ACCOUNTS & MEMBERSHIPS THE APPLICANT ALREADY HOLDS:
+${(prof.connectedAccounts && prof.connectedAccounts.length > 0)
+  ? prof.connectedAccounts.map(a => "• " + (a.name || "Unnamed") + (a.identifier ? " (" + a.identifier + ")" : "") + (a.notes ? " — " + a.notes : "")).join("\n")
+  : "None listed. The applicant may need to create accounts for this opportunity."}
+
+When identifying account prerequisites during your research, cross-reference this list. If the opportunity requires an account the applicant ALREADY holds, note it as met. If they need a new account, flag it clearly in the accountsRequired output field.
+
 PROJECT
 • Title: "${p.title}"
 • Format: ${p.format}
@@ -1295,6 +1303,7 @@ Before writing a single word of the application, you MUST use web search to rese
    - Word/character limits per section
    - Custom sections unique to this opportunity (e.g., "Community Engagement Plan," "Distribution Strategy," "Diversity Statement," "Letter of Interest")
    - External materials the user must provide themselves (artwork, production stills, trailer/sizzle reel, pitch video, letters of recommendation, W9s, budget spreadsheets, work samples, IMDb links, etc.)
+   - **Account / membership prerequisites** — does this opportunity require the applicant to have an account or active membership with a specific platform? Common examples: Blacklist hosted evaluation, Sundance Institute account, Film Independent membership, FilmFreeway account, Coverfly profile, IMDb Pro listing, WGA registration, Stage 32 membership, Tracking Board, fiscal sponsor affiliation, 501(c)(3) status. Check the applicant's connected accounts list (provided in context) and flag which are met vs. which the applicant needs to create.
 
 Search broadly. Read multiple pages. Do NOT skip this step.
 
@@ -1376,6 +1385,15 @@ OUTPUT FORMAT (JSON only, no markdown, no backticks)
       "requirement": "What the opportunity actually requires, e.g. '300dpi, 16:9 aspect ratio, JPG or PNG'",
       "note": "Brief note on what the user needs to do — these cannot be auto-generated. E.g., 'Upload your best production still or artwork. Contact your production designer for high-res files.'",
       "critical": true
+    }
+  ],
+  "accountsRequired": [
+    {
+      "name": "Platform / service name, e.g. 'The Black List' or 'Sundance Institute'",
+      "reason": "Why this account is needed for this specific application, e.g. 'Script must be hosted on Blacklist with minimum 7.0 score' or 'Account required to access submission portal'",
+      "url": "Direct URL to create the account or view requirements, if known",
+      "alreadyMet": false,
+      "matchedAccount": "If the applicant already holds this account per their connected accounts list, put the matched account name here. Otherwise empty string."
     }
   ],
   "strategicNotes": "INTERNAL ONLY — not for the application itself. Write 3-5 bullet points for the applicant (Ryan) explaining: what angle you chose and why, what you deliberately emphasized or downplayed, any risks or weak spots in the application, and suggestions for what to personalize or supplement before submitting. Include a reminder to gather the external materials listed above."
@@ -1517,6 +1535,13 @@ APPLICANT
 
 🚨 These are the EXACT contact details selection committees should use to respond. You MUST include them in the application. Do not use placeholders, do not make up different contact info, do not omit them. The cover letter MUST include these details in a contact block (typically at the top below the letterhead OR at the close). If the application has a dedicated contact field (name/email/phone), use these exact values. If the applicant's company website shows different contact info, use the ones above — they are authoritative.
 
+🔗 CONNECTED ACCOUNTS & MEMBERSHIPS THE APPLICANT ALREADY HOLDS:
+${(prof.connectedAccounts && prof.connectedAccounts.length > 0)
+  ? prof.connectedAccounts.map(a => "• " + (a.name || "Unnamed") + (a.identifier ? " (" + a.identifier + ")" : "") + (a.notes ? " — " + a.notes : "")).join("\n")
+  : "None listed. The applicant may need to create accounts for this opportunity."}
+
+When identifying account prerequisites during your research, cross-reference this list. If the opportunity requires an account the applicant ALREADY holds, note it as met. If they need a new account, flag it clearly in the accountsRequired output field.
+
 PROJECT
 • Title: "${p.title}"
 • Format: ${p.format}
@@ -1561,6 +1586,9 @@ Respond ONLY with JSON (no markdown):
   ],
   "externalMaterials": [
     { "name": "...", "requirement": "...", "note": "...", "critical": true }
+  ],
+  "accountsRequired": [
+    { "name": "Platform name", "reason": "Why needed", "url": "direct link", "alreadyMet": false, "matchedAccount": "" }
   ],
   "strategicNotes": "Internal bullet points: angle chosen, what was emphasized, risks, personalization suggestions, reminder to gather external materials."
 }`;
@@ -1637,6 +1665,7 @@ Respond ONLY with JSON (no markdown):
   "timeline": "Preserve or update — only if in standardSectionsNeeded",
   "customSections": "Preserve existing custom sections with updated content where needed",
   "externalMaterials": "Preserve existing external materials list, updating only if requirements changed",
+  "accountsRequired": "Preserve existing account requirements, updating only if your re-research reveals changes. Cross-reference against the connected accounts list provided.",
   "strategicNotes": "...",
   "changesSummary": "Brief bullet points: what was updated and why, or 'No meaningful changes needed' if the draft already incorporates the latest intelligence well."
 }`;
@@ -1675,7 +1704,7 @@ Respond ONLY with JSON (no markdown):
           if (a.id !== appId) return a;
           const newContent = { ...a.content };
           // Copy over any fields that came back, including research + toneStrategy
-          ["projectStatement", "artistStatement", "budgetJustification", "impactStatement", "timeline", "coverLetter", "strategicNotes", "research", "toneStrategy", "requirements", "customSections", "externalMaterials"].forEach(k => {
+          ["projectStatement", "artistStatement", "budgetJustification", "impactStatement", "timeline", "coverLetter", "strategicNotes", "research", "toneStrategy", "requirements", "customSections", "externalMaterials", "accountsRequired"].forEach(k => {
             if (parsed[k]) newContent[k] = parsed[k];
           });
           return {
@@ -4542,6 +4571,99 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
           </Card>
         )}
 
+        {c.accountsRequired && Array.isArray(c.accountsRequired) && c.accountsRequired.length > 0 && (() => {
+          const userAccounts = (profile.connectedAccounts || []).map(a => (a.name || "").toLowerCase().trim());
+          const withStatus = c.accountsRequired.map(acc => {
+            const reqName = (acc.name || "").toLowerCase().trim();
+            // Match if exact name matches OR if AI already marked alreadyMet
+            const met = acc.alreadyMet || userAccounts.some(u => u === reqName || u.includes(reqName) || reqName.includes(u));
+            return { ...acc, _met: met };
+          });
+          const metCount = withStatus.filter(a => a._met).length;
+          const totalCount = withStatus.length;
+          const allMet = metCount === totalCount;
+          return (
+            <Card style={{
+              marginBottom: "12px",
+              borderColor: allMet ? C.ok + "50" : C.pp + "50",
+              background: (allMet ? C.ok : C.pp) + "08"
+            }}>
+              <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "4px"
+              }}>
+                <h3 style={{
+                  fontFamily: FN.d,
+                  fontSize: "18px",
+                  fontStyle: "italic",
+                  color: allMet ? C.ok : C.pp
+                }}>🔗 Account Prerequisites</h3>
+                <Bdg color={allMet ? C.ok : C.pp}>
+                  {metCount} / {totalCount} met
+                </Bdg>
+              </div>
+              <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "14px" }}>
+                Accounts or memberships required before applying. Cross-referenced with your Profile → Connected Accounts.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {withStatus.map((acc, i) => (
+                  <div key={i} style={{
+                    background: C.bg,
+                    padding: "12px 14px",
+                    borderRadius: "6px",
+                    borderLeft: "3px solid " + (acc._met ? C.ok : C.pp)
+                  }}>
+                    <div style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "8px",
+                      marginBottom: "6px",
+                      flexWrap: "wrap"
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                        <p style={{ fontSize: "14px", fontWeight: 600, color: C.tx }}>
+                          {acc.name}
+                        </p>
+                        {acc._met ? (
+                          <Bdg color={C.ok}>✓ YOU HAVE THIS</Bdg>
+                        ) : (
+                          <Bdg color={C.pp}>⚠ NEEDED</Bdg>
+                        )}
+                      </div>
+                      {acc.url && (
+                        <Btn
+                          variant="ghost"
+                          small
+                          onClick={() => window.open(acc.url, "_blank")}
+                          style={{ color: C.ac }}
+                        >↗ Visit</Btn>
+                      )}
+                    </div>
+                    {acc.reason && (
+                      <p style={{ fontSize: "12px", color: C.tm, lineHeight: 1.5, marginBottom: acc.matchedAccount ? "4px" : 0 }}>
+                        {acc.reason}
+                      </p>
+                    )}
+                    {acc._met && acc.matchedAccount && (
+                      <p style={{ fontSize: "11px", color: C.ok, fontFamily: FN.m }}>
+                        ✓ Matched with: {acc.matchedAccount}
+                      </p>
+                    )}
+                    {!acc._met && (
+                      <p style={{ fontSize: "11px", color: C.pp, fontFamily: FN.m, marginTop: "4px" }}>
+                        → Once you create this account, add it to Profile → Connected Accounts so the AI can cross-reference it for future applications.
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Card>
+          );
+        })()}
+
         {c.externalMaterials && Array.isArray(c.externalMaterials) && c.externalMaterials.length > 0 && (() => {
           const readyCount = c.externalMaterials.filter(m => m.status === "received" || m.status === "na").length;
           const totalCount = c.externalMaterials.length;
@@ -6168,6 +6290,110 @@ function ProfView({ profile, save }) {
           )}
           <Btn onClick={doSave}>Save All</Btn>
         </div>
+      </Card>
+
+      <Card style={{ marginTop: "20px", borderColor: C.pp + "40" }}>
+        <h3 style={{
+          fontFamily: FN.d,
+          fontSize: "20px",
+          fontStyle: "italic",
+          marginBottom: "6px"
+        }}>🔗 Connected Accounts & Memberships</h3>
+        <p style={{ fontSize: "12px", color: C.tm, marginBottom: "16px", lineHeight: 1.5 }}>
+          Track accounts and memberships you hold on industry platforms (Blacklist, Sundance Institute, Film Independent, IMDb Pro, FilmFreeway, WithoutABox, Coverfly, Stage 32, etc.). When an application requires one of these, the AI will cross-reference this list and tell you if you're already covered or need to sign up.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "14px" }}>
+          {(form.connectedAccounts || []).map((acc, i) => (
+            <div key={i} style={{
+              background: C.bg,
+              border: "1px solid " + C.bd,
+              borderRadius: "6px",
+              padding: "12px 14px"
+            }}>
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "8px",
+                marginBottom: "8px"
+              }}>
+                <div>
+                  <label style={LS}>Platform / Account Name</label>
+                  <input
+                    value={acc.name || ""}
+                    placeholder="e.g. The Black List, Sundance Institute"
+                    onChange={e => {
+                      const next = [...(form.connectedAccounts || [])];
+                      next[i] = { ...next[i], name: e.target.value };
+                      setForm({ ...form, connectedAccounts: next });
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={LS}>Username / Identifier</label>
+                  <input
+                    value={acc.identifier || ""}
+                    placeholder="e.g. ryan_guiterman"
+                    onChange={e => {
+                      const next = [...(form.connectedAccounts || [])];
+                      next[i] = { ...next[i], identifier: e.target.value };
+                      setForm({ ...form, connectedAccounts: next });
+                    }}
+                  />
+                </div>
+              </div>
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr auto",
+                gap: "8px",
+                alignItems: "end"
+              }}>
+                <div>
+                  <label style={LS}>URL (optional)</label>
+                  <input
+                    value={acc.url || ""}
+                    placeholder="https://..."
+                    onChange={e => {
+                      const next = [...(form.connectedAccounts || [])];
+                      next[i] = { ...next[i], url: e.target.value };
+                      setForm({ ...form, connectedAccounts: next });
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={LS}>Notes (tier, status, etc.)</label>
+                  <input
+                    value={acc.notes || ""}
+                    placeholder="e.g. 7.5 evaluation, Top List"
+                    onChange={e => {
+                      const next = [...(form.connectedAccounts || [])];
+                      next[i] = { ...next[i], notes: e.target.value };
+                      setForm({ ...form, connectedAccounts: next });
+                    }}
+                  />
+                </div>
+                <Btn
+                  variant="ghost"
+                  small
+                  onClick={() => {
+                    const next = (form.connectedAccounts || []).filter((_, j) => j !== i);
+                    setForm({ ...form, connectedAccounts: next });
+                  }}
+                  style={{ color: C.dn }}
+                >✗ Remove</Btn>
+              </div>
+            </div>
+          ))}
+        </div>
+        <Btn
+          variant="secondary"
+          onClick={() => {
+            const next = [...(form.connectedAccounts || []), { name: "", identifier: "", url: "", notes: "" }];
+            setForm({ ...form, connectedAccounts: next });
+          }}
+        >+ Add Account</Btn>
+        <p style={{ fontSize: "11px", color: C.tm, marginTop: "10px" }}>
+          Don't forget to click "Save All" at the top after editing.
+        </p>
       </Card>
 
       <Card style={{ marginTop: "20px", borderColor: C.tl + "40" }}>
