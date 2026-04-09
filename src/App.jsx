@@ -19,6 +19,9 @@ const DEF_PROFILE = {
   location: "New York City",
   bio: "NYC-based film, theater and animation production company specializing in genre films with cutting-edge VFX + AI technology. Credits include Canvas (Annecy 2021, Gravitas Ventures) and Loud & Longing (Lighthouse IFF 2023, Gravitas Ventures).",
   website: "precariatproductions.com",
+  contactEmail: "ryan@precariatproductions.com",
+  contactPhone: "(917) 544-0654",
+  contactName: "Ryan Guiterman",
   credits: "Canvas (2021) - Animated Horror - Annecy, Gravitas Ventures\nLoud & Longing (2023) - Drama/Thriller - Lighthouse IFF, Gravitas Ventures\nFor Marta (Short Film)",
   specialties: "Animation, Horror, Genre Films, VFX, AI Technology, Independent Film"
 };
@@ -576,7 +579,11 @@ export default function App() {
         const results = await Promise.all(
           keys.map(k => window.storage.get(k).catch(() => null))
         );
-        if (results[0] && results[0].value) setProfile(JSON.parse(results[0].value));
+        if (results[0] && results[0].value) {
+          const loaded = JSON.parse(results[0].value);
+          // Merge with DEF_PROFILE so any new fields (contactEmail, contactPhone, etc.) get populated
+          setProfile({ ...DEF_PROFILE, ...loaded });
+        }
         if (results[1] && results[1].value) setProjects(JSON.parse(results[1].value));
         if (results[2] && results[2].value) setOpps(JSON.parse(results[2].value));
         if (results[3] && results[3].value) {
@@ -980,6 +987,14 @@ APPLICANT
 • Credits: ${prof.credits}
 • Specialties: ${prof.specialties}
 
+📬 CONTACT FOR RESPONSES (MANDATORY INCLUSION):
+• Primary contact: ${prof.contactName || prof.founders}
+• Email: ${prof.contactEmail || "Not provided"}
+• Phone: ${prof.contactPhone || "Not provided"}
+• Website: ${prof.website || "Not provided"}
+
+🚨 These are the EXACT contact details selection committees should use to respond. You MUST include them in the application. Do not use placeholders, do not make up different contact info, do not omit them. The cover letter MUST include these details in a contact block (typically at the top below the letterhead OR at the close). If the application has a dedicated contact field (name/email/phone), use these exact values. If the applicant's company website shows different contact info, use the ones above — they are authoritative.
+
 PROJECT
 • Title: "${p.title}"
 • Format: ${p.format}
@@ -1196,6 +1211,14 @@ APPLICANT
 • Credits: ${prof.credits}
 • Specialties: ${prof.specialties}
 
+📬 CONTACT FOR RESPONSES (MANDATORY INCLUSION):
+• Primary contact: ${prof.contactName || prof.founders}
+• Email: ${prof.contactEmail || "Not provided"}
+• Phone: ${prof.contactPhone || "Not provided"}
+• Website: ${prof.website || "Not provided"}
+
+🚨 These are the EXACT contact details selection committees should use to respond. You MUST include them in the application. Do not use placeholders, do not make up different contact info, do not omit them. The cover letter MUST include these details in a contact block (typically at the top below the letterhead OR at the close). If the application has a dedicated contact field (name/email/phone), use these exact values. If the applicant's company website shows different contact info, use the ones above — they are authoritative.
+
 PROJECT
 • Title: "${p.title}"
 • Format: ${p.format}
@@ -1258,6 +1281,10 @@ APPLICANT
 • Company: ${prof.companyName} | ${prof.founders} | ${prof.location}
 • Bio: ${prof.bio}
 • Credits: ${prof.credits}
+
+📬 AUTHORITATIVE CONTACT (must appear in application):
+• Name: ${prof.contactName || prof.founders} · Email: ${prof.contactEmail || "Not provided"} · Phone: ${prof.contactPhone || "Not provided"} · Website: ${prof.website || "Not provided"}
+If the existing draft has different contact info or uses placeholders, CORRECT IT to use these exact details.
 
 PROJECT (LATEST VERSION)
 • Title: "${p.title}"
@@ -3723,6 +3750,48 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
           </Card>
         )}
 
+        {(profile.contactEmail || profile.contactPhone) && (
+          <Card style={{
+            marginBottom: "12px",
+            borderColor: C.ok + "40",
+            background: C.ok + "06"
+          }}>
+            <h3 style={{
+              fontFamily: FN.d,
+              fontSize: "16px",
+              fontStyle: "italic",
+              color: C.ok,
+              marginBottom: "4px"
+            }}>📬 Contact for Responses</h3>
+            <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "12px" }}>
+              Included in this application — where the committee will reply
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              {profile.contactName && (
+                <p style={{ fontSize: "13px", color: C.tx }}>
+                  <span style={{ color: C.tm, fontFamily: FN.m, fontSize: "11px", marginRight: "8px" }}>NAME</span>
+                  {profile.contactName}
+                </p>
+              )}
+              {profile.contactEmail && (
+                <p style={{ fontSize: "13px", color: C.tx }}>
+                  <span style={{ color: C.tm, fontFamily: FN.m, fontSize: "11px", marginRight: "8px" }}>EMAIL</span>
+                  <a href={"mailto:" + profile.contactEmail} style={{ color: C.ac }}>{profile.contactEmail}</a>
+                </p>
+              )}
+              {profile.contactPhone && (
+                <p style={{ fontSize: "13px", color: C.tx }}>
+                  <span style={{ color: C.tm, fontFamily: FN.m, fontSize: "11px", marginRight: "8px" }}>PHONE</span>
+                  {profile.contactPhone}
+                </p>
+              )}
+            </div>
+            <p style={{ fontSize: "11px", color: C.tm, marginTop: "10px", lineHeight: 1.5 }}>
+              To change, edit your Profile. Changes apply to newly generated or refreshed applications.
+            </p>
+          </Card>
+        )}
+
         {c.requirements && (c.requirements.summary || (c.requirements.standardSectionsNeeded && c.requirements.standardSectionsNeeded.length > 0)) && (
           <Card style={{
             marginBottom: "12px",
@@ -4935,6 +5004,58 @@ function ProfView({ profile, save }) {
               value={form.website}
               onChange={e => setForm({ ...form, website: e.target.value })}
             />
+          </div>
+          <div style={{ gridColumn: "1 / -1", marginTop: "8px" }}>
+            <div style={{
+              padding: "14px 16px",
+              background: C.ac + "08",
+              border: "1px solid " + C.ac + "30",
+              borderRadius: "8px"
+            }}>
+              <p style={{
+                fontFamily: FN.m,
+                fontSize: "10px",
+                color: C.ac,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                marginBottom: "4px"
+              }}>✉ Contact for Responses</p>
+              <p style={{ fontSize: "11px", color: C.tm, marginBottom: "12px", lineHeight: 1.5 }}>
+                This is where opportunities will direct their responses. Included in every generated application so selection committees know exactly who and how to contact.
+              </p>
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "10px"
+              }}>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={LS}>Contact Name</label>
+                  <input
+                    value={form.contactName || ""}
+                    placeholder="Ryan Guiterman"
+                    onChange={e => setForm({ ...form, contactName: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label style={LS}>Contact Email *</label>
+                  <input
+                    type="email"
+                    value={form.contactEmail || ""}
+                    placeholder="ryan@precariatproductions.com"
+                    onChange={e => setForm({ ...form, contactEmail: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label style={LS}>Contact Phone</label>
+                  <input
+                    type="tel"
+                    value={form.contactPhone || ""}
+                    placeholder="(917) 544-0654"
+                    onChange={e => setForm({ ...form, contactPhone: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
           <div style={{ gridColumn: "1 / -1" }}>
             <label style={LS}>Bio</label>
