@@ -2614,6 +2614,8 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
   const [rvw, setRvw] = useState(null);
   const [limitOk, setLimitOk] = useState(false);
   const [submitMdl, setSubmitMdl] = useState(null);
+  const [editingKey, setEditingKey] = useState(null);
+  const [draftText, setDraftText] = useState("");
 
   // Derive busy + errors from global jobs
   const generateJobs = jobs.filter(j => j.kind === "generate");
@@ -2665,15 +2667,44 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
     const app = apps[view];
     const c = app.content;
     const sections = [
-      { t: "Cover Letter", v: c.coverLetter },
-      { t: "Project Statement", v: c.projectStatement },
-      { t: "Artist Statement", v: c.artistStatement },
-      { t: "Budget Justification", v: c.budgetJustification },
-      { t: "Impact Statement", v: c.impactStatement },
-      { t: "Timeline", v: c.timeline }
+      { t: "Cover Letter", v: c.coverLetter, k: "coverLetter" },
+      { t: "Project Statement", v: c.projectStatement, k: "projectStatement" },
+      { t: "Artist Statement", v: c.artistStatement, k: "artistStatement" },
+      { t: "Budget Justification", v: c.budgetJustification, k: "budgetJustification" },
+      { t: "Impact Statement", v: c.impactStatement, k: "impactStatement" },
+      { t: "Timeline", v: c.timeline, k: "timeline" }
     ].filter(s => s.v);
     const sc = { draft: C.wn, approved: C.ac, submitted: C.ok };
     const pm = pay.methods.find(m => m.id === app.payId);
+    const canEdit = app.status !== "submitted";
+
+    const startEdit = (key, currentVal) => {
+      setEditingKey(key);
+      setDraftText(currentVal || "");
+    };
+
+    const cancelEdit = () => {
+      setEditingKey(null);
+      setDraftText("");
+    };
+
+    const saveEdit = (key) => {
+      const updated = [...apps];
+      updated[view] = {
+        ...updated[view],
+        content: { ...updated[view].content, [key]: draftText },
+        editedAt: new Date().toISOString(),
+        // If they edit an approved app, drop back to draft so it gets re-reviewed
+        status: updated[view].status === "approved" ? "draft" : updated[view].status,
+        // Reset review checks if reverting to draft
+        checks: updated[view].status === "approved"
+          ? { content: false, cost: false, ready: false }
+          : updated[view].checks
+      };
+      save(updated);
+      setEditingKey(null);
+      setDraftText("");
+    };
 
     return (
       <div>
@@ -2694,6 +2725,7 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
               {app.projTitle} · {new Date(app.createdAt).toLocaleDateString()}
               {app.hadAnalysis ? " · 🔬" : ""}
               {app.hadFiles ? " · 📎" : ""}
+              {app.editedAt ? " · ✎ edited " + new Date(app.editedAt).toLocaleDateString() : ""}
             </p>
           </div>
           <Bdg color={sc[app.status]}>{app.status}</Bdg>
@@ -2750,44 +2782,131 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
           </div>
         </Card>
 
-        {sections.map((s, i) => (
-          <Card key={i} style={{ marginBottom: "12px" }}>
-            <h3 style={{
-              fontFamily: FN.m,
-              fontSize: "11px",
-              color: C.ad,
-              letterSpacing: "0.06em",
-              textTransform: "uppercase",
-              marginBottom: "12px"
-            }}>{s.t}</h3>
-            <p style={{
-              fontSize: "14px",
-              lineHeight: 1.7,
-              whiteSpace: "pre-wrap"
-            }}>{s.v}</p>
-          </Card>
-        ))}
+        {sections.map((s, i) => {
+          const isEditing = editingKey === s.k;
+          return (
+            <Card key={i} style={{ marginBottom: "12px" }}>
+              <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "12px"
+              }}>
+                <h3 style={{
+                  fontFamily: FN.m,
+                  fontSize: "11px",
+                  color: C.ad,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase"
+                }}>{s.t}</h3>
+                {canEdit && !isEditing && (
+                  <Btn
+                    variant="ghost"
+                    small
+                    onClick={() => startEdit(s.k, s.v)}
+                    style={{ color: C.tm }}
+                  >✎ Edit</Btn>
+                )}
+              </div>
+              {isEditing ? (
+                <div>
+                  <textarea
+                    rows={Math.max(6, Math.min(20, (draftText.match(/\n/g) || []).length + 3))}
+                    value={draftText}
+                    onChange={e => setDraftText(e.target.value)}
+                    style={{
+                      fontSize: "14px",
+                      lineHeight: 1.7,
+                      fontFamily: FN.b
+                    }}
+                    autoFocus
+                  />
+                  <div style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginTop: "10px",
+                    gap: "10px"
+                  }}>
+                    <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m }}>
+                      {draftText.length} chars · {draftText.trim().split(/\s+/).filter(Boolean).length} words
+                      {app.status === "approved" && " · editing reverts to draft"}
+                    </p>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <Btn variant="secondary" small onClick={cancelEdit}>Cancel</Btn>
+                      <Btn small onClick={() => saveEdit(s.k)}>Save</Btn>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p style={{
+                  fontSize: "14px",
+                  lineHeight: 1.7,
+                  whiteSpace: "pre-wrap"
+                }}>{s.v}</p>
+              )}
+            </Card>
+          );
+        })}
 
-        {c.strategicNotes && (
-          <Card style={{
-            marginBottom: "12px",
-            borderColor: C.tl + "30",
-            background: C.tl + "06"
-          }}>
-            <h3 style={{
-              fontFamily: FN.m,
-              fontSize: "11px",
-              color: C.tl,
-              letterSpacing: "0.06em",
-              marginBottom: "12px"
-            }}>🎯 STRATEGIC NOTES (Internal)</h3>
-            <p style={{
-              fontSize: "13px",
-              lineHeight: 1.7,
-              whiteSpace: "pre-wrap"
-            }}>{c.strategicNotes}</p>
-          </Card>
-        )}
+        {c.strategicNotes && (() => {
+          const isEditing = editingKey === "strategicNotes";
+          return (
+            <Card style={{
+              marginBottom: "12px",
+              borderColor: C.tl + "30",
+              background: C.tl + "06"
+            }}>
+              <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "12px"
+              }}>
+                <h3 style={{
+                  fontFamily: FN.m,
+                  fontSize: "11px",
+                  color: C.tl,
+                  letterSpacing: "0.06em"
+                }}>🎯 STRATEGIC NOTES (Internal)</h3>
+                {canEdit && !isEditing && (
+                  <Btn
+                    variant="ghost"
+                    small
+                    onClick={() => startEdit("strategicNotes", c.strategicNotes)}
+                    style={{ color: C.tl }}
+                  >✎ Edit</Btn>
+                )}
+              </div>
+              {isEditing ? (
+                <div>
+                  <textarea
+                    rows={Math.max(4, Math.min(15, (draftText.match(/\n/g) || []).length + 3))}
+                    value={draftText}
+                    onChange={e => setDraftText(e.target.value)}
+                    style={{ fontSize: "13px", lineHeight: 1.7 }}
+                    autoFocus
+                  />
+                  <div style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    gap: "8px",
+                    marginTop: "10px"
+                  }}>
+                    <Btn variant="secondary" small onClick={cancelEdit}>Cancel</Btn>
+                    <Btn small onClick={() => saveEdit("strategicNotes")}>Save</Btn>
+                  </div>
+                </div>
+              ) : (
+                <p style={{
+                  fontSize: "13px",
+                  lineHeight: 1.7,
+                  whiteSpace: "pre-wrap"
+                }}>{c.strategicNotes}</p>
+              )}
+            </Card>
+          );
+        })()}
 
         <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
           <Btn
