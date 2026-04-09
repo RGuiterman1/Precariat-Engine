@@ -535,6 +535,61 @@ async function deleteProjectFiles(projectId) {
   } catch (e) {}
 }
 
+async function exportAllData() {
+  const bundle = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    app: "precariat-opportunity-engine",
+    data: {}
+  };
+  // Core keys
+  for (const [name, key] of Object.entries(SK)) {
+    if (key === SK.FILES) continue; // handle files separately
+    try {
+      const r = await window.storage.get(key);
+      bundle.data[name] = r && r.value ? JSON.parse(r.value) : null;
+    } catch (e) {
+      bundle.data[name] = null;
+    }
+  }
+  // Per-project files
+  bundle.files = {};
+  const projects = bundle.data.PROJECTS || [];
+  for (const p of projects) {
+    try {
+      const r = await window.storage.get(SK.FILES + "-" + p.id);
+      bundle.files[p.id] = r && r.value ? JSON.parse(r.value) : [];
+    } catch (e) {
+      bundle.files[p.id] = [];
+    }
+  }
+  return bundle;
+}
+
+async function importAllData(bundle) {
+  if (!bundle || bundle.app !== "precariat-opportunity-engine") {
+    throw new Error("Invalid backup file — not a Precariat Opportunity Engine export");
+  }
+  if (!bundle.data) {
+    throw new Error("Invalid backup file — no data section");
+  }
+  // Restore core keys
+  for (const [name, value] of Object.entries(bundle.data)) {
+    if (value === null || value === undefined) continue;
+    const key = SK[name];
+    if (!key) continue;
+    await window.storage.set(key, JSON.stringify(value));
+  }
+  // Restore files
+  if (bundle.files) {
+    for (const [projectId, files] of Object.entries(bundle.files)) {
+      if (files && files.length > 0) {
+        await window.storage.set(SK.FILES + "-" + projectId, JSON.stringify(files));
+      }
+    }
+  }
+}
+
 /* ═══════════════════════════════════════════════════
    MAIN APP
    ═══════════════════════════════════════════════════ */
@@ -5444,6 +5499,8 @@ function ProfView({ profile, save }) {
   const [done, setDone] = useState(false);
   const [apiKey, setApiKey] = useState(localStorage.getItem("poe_api_key") || "");
   const [keyVisible, setKeyVisible] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMsg, setBackupMsg] = useState("");
 
   const doSave = () => {
     save(form);
@@ -5637,6 +5694,113 @@ function ProfView({ profile, save }) {
             }}>✓ Saved</span>
           )}
           <Btn onClick={doSave}>Save All</Btn>
+        </div>
+      </Card>
+
+      <Card style={{ marginTop: "20px", borderColor: C.tl + "40" }}>
+        <h3 style={{
+          fontFamily: FN.d,
+          fontSize: "20px",
+          fontStyle: "italic",
+          marginBottom: "6px"
+        }}>💾 Backup & Restore</h3>
+        <p style={{ fontSize: "12px", color: C.tm, marginBottom: "16px", lineHeight: 1.5 }}>
+          All your data lives in this browser. Export a full backup (projects, analysis, opportunities, applications, outcomes, payment settings, and attached files) to a JSON file you can save anywhere. Restore from a backup on a new device or after clearing browser data.
+        </p>
+        <div style={{
+          padding: "12px 14px",
+          background: C.wn + "10",
+          border: "1px solid " + C.wn + "30",
+          borderRadius: "6px",
+          marginBottom: "16px"
+        }}>
+          <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5 }}>
+            ⚠ <strong>Strongly recommended:</strong> Export a backup after every major session. All data is stored locally in IndexedDB — if you clear your browser or switch devices without a backup, everything is lost.
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
+          <Btn
+            variant="teal"
+            disabled={backupBusy}
+            onClick={async () => {
+              setBackupBusy(true);
+              setBackupMsg("");
+              try {
+                const bundle = await exportAllData();
+                const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                const dateStr = new Date().toISOString().slice(0, 10);
+                a.download = "precariat-backup-" + dateStr + ".json";
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                const projCount = bundle.data.PROJECTS ? bundle.data.PROJECTS.length : 0;
+                const appCount = bundle.data.APPS ? bundle.data.APPS.length : 0;
+                setBackupMsg("✓ Exported " + projCount + " projects, " + appCount + " applications");
+              } catch (e) {
+                setBackupMsg("✗ Export failed: " + (e.message || "unknown error"));
+              } finally {
+                setBackupBusy(false);
+              }
+            }}
+          >{backupBusy ? "Exporting..." : "⬇ Export All Data"}</Btn>
+
+          <label style={{
+            display: "inline-block",
+            cursor: backupBusy ? "not-allowed" : "pointer"
+          }}>
+            <span style={{
+              display: "inline-block",
+              padding: "10px 18px",
+              background: "transparent",
+              border: "1px solid " + C.bd,
+              borderRadius: "6px",
+              color: C.tx,
+              fontSize: "13px",
+              fontFamily: FN.m,
+              cursor: backupBusy ? "not-allowed" : "pointer",
+              opacity: backupBusy ? 0.5 : 1
+            }}>⬆ Import Backup</span>
+            <input
+              type="file"
+              accept="application/json,.json"
+              disabled={backupBusy}
+              style={{ display: "none" }}
+              onChange={async (e) => {
+                const file = e.target.files && e.target.files[0];
+                if (!file) return;
+                if (!confirm("Importing a backup will REPLACE all current data in this browser. Make sure you've exported a current backup first if you want to keep what's here. Continue?")) {
+                  e.target.value = "";
+                  return;
+                }
+                setBackupBusy(true);
+                setBackupMsg("");
+                try {
+                  const text = await file.text();
+                  const bundle = JSON.parse(text);
+                  await importAllData(bundle);
+                  setBackupMsg("✓ Import successful — reloading in 2 seconds...");
+                  setTimeout(() => window.location.reload(), 2000);
+                } catch (err) {
+                  setBackupMsg("✗ Import failed: " + (err.message || "invalid file"));
+                  setBackupBusy(false);
+                }
+                e.target.value = "";
+              }}
+            />
+          </label>
+
+          {backupMsg && (
+            <p style={{
+              fontSize: "12px",
+              color: backupMsg.startsWith("✓") ? C.ok : C.dn,
+              fontFamily: FN.m,
+              marginLeft: "8px"
+            }}>{backupMsg}</p>
+          )}
         </div>
       </Card>
     </div>
