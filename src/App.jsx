@@ -632,8 +632,11 @@ export default function App() {
       const projectFiles = await loadProjectFiles(p.id);
       const prof = profileRef.current;
 
-      const textPrompt = `You are a world-class film strategist who has programmed Sundance, Cannes, and advised A24. Analyze this project with extreme depth.
+      const textPrompt = `You are a world-class film strategist who has programmed Sundance, Cannes, and advised A24. Your analysis leaves NO stone unturned — you deeply research every person attached to a project because even a single collaborator's credentials can unlock entire tiers of grants, labs, and festivals.
 
+═══════════════════════════════════════════════════════════
+COMPANY & PROJECT DATA
+═══════════════════════════════════════════════════════════
 COMPANY: ${prof.companyName} | ${prof.founders} | ${prof.location}
 Credits: ${prof.credits}
 Specialties: ${prof.specialties}
@@ -654,8 +657,44 @@ Team Notes: ${p.teamNotes || "Not specified"}
 
 ${projectFiles.length > 0 ? "ATTACHED MATERIALS (review carefully for deep analysis):\n" + projectFiles.map(f => "- " + f.name + " (" + f.category + ")").join("\n") + "\n\nUse attached materials as the PRIMARY source. Reference specific scenes, visuals, or content from them.\n" : ""}
 
-Respond ONLY with JSON (no markdown, no backticks):
+═══════════════════════════════════════════════════════════
+CRITICAL: TEAM DEEP-DIVE (MANDATORY, NON-NEGOTIABLE)
+═══════════════════════════════════════════════════════════
+You MUST use web search to research EVERY named person in the Team Notes, Credits, and Founders sections above. This is the most important part of your analysis — the right team attachments unlock opportunities the project couldn't otherwise access.
+
+For each person mentioned by name:
+1. Search their full name + "producer" / "director" / "writer" / relevant role + any company they're associated with
+2. Find their credits, awards, and industry standing
+3. Identify specific "leverage points" — awards won, festivals played, institutions they're tied to, notable collaborators
+4. Note any credentials that could DIRECTLY unlock specific grants, labs, or festivals (e.g., "Academy membership opens AMPAS grants", "Sundance alum status qualifies for Sundance Institute re-entry programs", "Oscar winner → eligible for industry-insider programs")
+
+DO NOT skip this research. DO NOT assume. A team member you dismiss could be an Oscar winner whose attachment would have won you a $500k grant. ACTIVELY SEARCH EVERY NAME.
+
+Extract names from:
+- The explicit Team Notes field
+- The Credits/Founders fields on the company
+- Any names mentioned in the attached materials (screenplay cover page, pitch deck credits, look book credits)
+
+═══════════════════════════════════════════════════════════
+OUTPUT FORMAT (JSON only, no markdown, no backticks)
+═══════════════════════════════════════════════════════════
 {
+  "team": {
+    "members": [
+      {
+        "name": "Full name as mentioned",
+        "role": "Their role on THIS project (producer, DP, composer, etc.)",
+        "researchedCredits": "Notable credits found via web search — be specific about films, years, festivals",
+        "awardsAndHonors": "Any awards, nominations, fellowships, institutional memberships found",
+        "industryStanding": "1-2 sentences on how they're perceived in the industry — commercial? indie? auteur-world? documentary circle? etc.",
+        "leveragePoints": "Specific ways their attachment strengthens applications — be granular. E.g., 'Her Oscar win qualifies the project for AMPAS-adjacent programs' or 'Sundance Institute alum — natural fit for Sundance labs' or 'Emmy for HBO series — unlocks TV/streaming exec attention'",
+        "unlockedOpportunities": "Specific grants, labs, festivals, or funds their attachment could unlock that wouldn't otherwise be accessible"
+      }
+    ],
+    "collectiveLeverage": "2-3 sentences on how the TEAM as a whole positions this project. What tier of opportunities does their combined credibility unlock? What language/framings should applications use to highlight the team?",
+    "namesToForeground": "List the top 2-3 names to foreground in applications and WHY — based on which names carry the most weight with selection committees",
+    "researchGaps": "If you couldn't find solid info on any named person, list them here so the applicant knows to provide more context"
+  },
   "artistic": {
     "thematicCore": "3-4 sentences on the deepest thematic concerns. What questions does it ask?",
     "narrativeApproach": "2-3 sentences on storytelling strategy, structure, perspective, tone",
@@ -665,22 +704,22 @@ Respond ONLY with JSON (no markdown, no backticks):
   },
   "market": {
     "comparables": "3-5 comparable films with rationale",
-    "festivalStrategy": "3-4 sentences naming specific festivals and sections",
+    "festivalStrategy": "3-4 sentences naming specific festivals and sections — factor in which ones the TEAM's credentials make realistic",
     "audienceProfile": "2-3 sentences on core and secondary audiences",
-    "distributionAngle": "2-3 sentences on distribution strategy",
+    "distributionAngle": "2-3 sentences on distribution strategy — note any distribution avenues opened by team connections",
     "marketPositioning": "2-3 sentences on unique selling proposition",
-    "grantFitProfile": "2-3 sentences on what funding bodies would be receptive"
+    "grantFitProfile": "2-3 sentences on what funding bodies would be receptive — include any grants UNLOCKED by specific team members"
   },
   "strategy": {
-    "strengths": "3-4 points on competitive strengths",
+    "strengths": "3-4 points on competitive strengths — LEAD with team strengths if the team is strong",
     "risks": "2-3 points on potential concerns with mitigations",
-    "keyPhrasing": "5-8 specific phrases that should appear in applications",
+    "keyPhrasing": "5-8 specific phrases that should appear in applications — include team-credential phrasings",
     "submissionTiming": "2-3 sentences on optimal timing",
-    "idealOpportunityTypes": "ranked list of opportunity types with rationale"
+    "idealOpportunityTypes": "ranked list of opportunity types with rationale — prioritize ones where team credentials give maximum leverage"
   }
 }
 
-Be brutally specific to THIS project only. No generic advice.`;
+Be brutally specific to THIS project and THIS team only. No generic advice. Research every name. Leave no stone unturned.`;
 
       let messageContent;
       if (projectFiles.length > 0) {
@@ -708,7 +747,7 @@ Be brutally specific to THIS project only. No generic advice.`;
         messageContent = textPrompt;
       }
 
-      const txt = await askClaude(messageContent);
+      const txt = await askClaude(messageContent, true);
       const result = extractJSON(txt);
       if (result) {
         const current = projectsRef.current;
@@ -782,16 +821,33 @@ Be brutally specific to THIS project only. No generic advice.`;
     }
 
     let analysisContext = "";
+    let teamContext = "";
     if (a) {
       analysisContext = "\nPROJECT INTELLIGENCE:\n"
         + "Artistic: " + JSON.stringify(a.artistic || {}) + "\n"
         + "Market: " + JSON.stringify(a.market || {}) + "\n"
         + "Strategy: " + JSON.stringify(a.strategy || {}) + "\n\n"
         + "Use this intelligence to find opportunities aligned with the project's specific artistic and market profile.";
+
+      if (a.team) {
+        teamContext = "\n\n═══════════════════════════════════════════\n🔑 TEAM LEVERAGE (CRITICAL — DO NOT IGNORE)\n═══════════════════════════════════════════\n"
+          + "This project has specific collaborators whose credentials unlock opportunities the project couldn't otherwise access.\n\n"
+          + "TEAM MEMBERS:\n" + JSON.stringify(a.team.members || [], null, 2) + "\n\n"
+          + "COLLECTIVE LEVERAGE: " + (a.team.collectiveLeverage || "") + "\n"
+          + "NAMES TO FOREGROUND: " + (a.team.namesToForeground || "") + "\n\n"
+          + "🎯 MANDATORY SEARCH STRATEGY BASED ON TEAM:\n"
+          + "1. Each team member's awards, fellowships, and institutional ties may qualify the project for SPECIFIC opportunities. Search for opportunities that specifically reward teams with these credentials.\n"
+          + "2. Look for programs with 'alumni re-entry' pathways if any team member is a past fellow/alum of Sundance Institute, Film Independent, IFP, Cinereach, etc.\n"
+          + "3. Look for opportunities that specifically require or prefer 'experienced producers,' 'award-winning teams,' or 'established collaborators' — the team makes the project eligible.\n"
+          + "4. Factor award-based eligibility: Oscar/Emmy winners on the team may unlock AMPAS-adjacent programs, Television Academy programs, producer-led grants, and industry insider labs.\n"
+          + "5. Consider 'tiered' programs where team credentials let you apply to higher tiers than the project would otherwise merit.\n"
+          + "6. Note opportunities that specifically value festival pedigree — if a team member has Cannes/Sundance/Berlin/Venice history, those festivals' adjacent programs become stronger matches.\n\n"
+          + "LEAVE NO STONE UNTURNED. If even ONE team member's credentials could unlock a specific opportunity, include it with strong match strength.";
+      }
     }
 
     const prof = profileRef.current;
-    const prompt = `You are an expert film industry researcher. Search for REAL, currently open or upcoming ${tf} for this project.
+    const prompt = `You are an expert film industry researcher. Search for REAL, currently open or upcoming ${tf} for this project. Your job is to find opportunities where this SPECIFIC team's credentials give the highest probability of success.
 
 COMPANY: ${prof.companyName} | ${prof.bio} | ${prof.location}
 PROJECT: "${p.title}"
@@ -799,7 +855,8 @@ Format: ${p.format}
 Genre: ${p.genre || "?"}
 Stage: ${p.stage}
 Logline: ${p.logline || "?"}
-Themes: ${p.themes || "?"}${analysisContext}${exclusionContext}
+Themes: ${p.themes || "?"}
+Team Notes: ${p.teamNotes || "?"}${analysisContext}${teamContext}${exclusionContext}
 ${query && query.trim() ? "\nAdditional focus: " + query : ""}
 
 🚨 CRITICAL STAGE REQUIREMENT (NON-NEGOTIABLE):
@@ -814,11 +871,12 @@ Respond ONLY with a JSON array. Each object must have:
 - "amount", "submissionFee", "url"
 - "description" (2-3 sentences)
 - "stageEligibility" (explicit quote or paraphrase from the opportunity confirming it accepts ${p.stage}-stage projects)
-- "matchReason" (why this fits THIS specific project — reference the analysis if provided)
+- "matchReason" (why this fits THIS specific project — reference the analysis AND team credentials if relevant)
+- "teamAdvantage" (optional — if a specific team member's credentials give this project an edge for this opportunity, explain how. E.g., "Erika Hampson's Oscar win makes this project eligible for AMPAS Gold programs" — leave empty if team credentials don't specifically apply)
 - "matchStrength" ("strong"|"moderate"|"speculative")
 - "eligibility" (other key requirements beyond stage)
 
-Find 6-12 real opportunities that STRICTLY match the project's current stage. Quality over quantity.`;
+Find 6-12 real opportunities that STRICTLY match the project's current stage. Quality over quantity. Prioritize opportunities where team credentials give maximum leverage.`;
 
     try {
       const txt = await askClaude(prompt, true);
@@ -941,6 +999,15 @@ Armed with your research, write each section with these mandates:
 ▸ **ANSWER "WHY THIS, WHY HERE"**: Every section must implicitly or explicitly answer: "Why is THIS specific project right for THIS specific opportunity?" not just "Why is this project worthy of support?"
 
 ▸ **USE ATTACHED MATERIALS**: If there's a screenplay, quote or reference specific scenes. If there's a pitch deck, reference its visual language. If there's a look book, describe its aesthetic identity. Do not write as if you haven't read the materials.
+
+▸ **STRATEGICALLY FOREGROUND THE TEAM**: The project intelligence includes deep research on every team member — their awards, credits, institutional ties, and leverage points. Use this intelligently:
+   - If THIS opportunity's committee is likely to weigh specific credentials (Oscar winners, Emmy winners, Sundance alums, Academy members, past festival winners, institutional fellows), LEAD with the relevant team member and their relevant credential
+   - Match the named collaborator to what the org values. If the org cares about commercial viability, foreground producers with box office credits. If they care about art-house bona fides, foreground collaborators with Cannes/Venice history. If they care about social impact, foreground team members whose past work aligns.
+   - Reference specific past films the team has worked on when they map to the org's taste
+   - Use the "namesToForeground" field from the project intelligence as your starting guide — but calibrate to what THIS specific opportunity values
+   - If a team member's attachment SPECIFICALLY unlocks this opportunity (e.g., an AMPAS-eligible voter on an AMPAS-adjacent grant), make that connection explicit
+   - Do not list every team member equally — strategic emphasis is everything. A single well-positioned Oscar mention can outweigh a long list of credits.
+   - In the cover letter, a strong team credential should appear within the first 3 sentences when it's a genuine differentiator.
 
 ═══════════════════════════════════════════════════════════
 OUTPUT FORMAT (JSON only, no markdown, no backticks)
@@ -1927,6 +1994,99 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
 
         {a && !isAnalyzing(p.id) && (
           <div>
+            {a.team && (
+              <Card style={{ marginBottom: "16px", borderColor: C.ok + "40", background: C.ok + "06" }}>
+                <h3 style={{
+                  fontFamily: FN.d,
+                  fontSize: "20px",
+                  fontStyle: "italic",
+                  marginBottom: "6px"
+                }}>👥 Team Leverage</h3>
+                <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "20px" }}>
+                  Deep research on every named collaborator
+                </p>
+                {a.team.members && a.team.members.length > 0 && (
+                  <div style={{ marginBottom: "20px" }}>
+                    {a.team.members.map((m, i) => (
+                      <div key={i} style={{
+                        background: C.bg,
+                        borderRadius: "8px",
+                        padding: "16px",
+                        marginBottom: "10px",
+                        borderLeft: "3px solid " + C.ok
+                      }}>
+                        <div style={{
+                          display: "flex",
+                          alignItems: "baseline",
+                          gap: "10px",
+                          marginBottom: "8px",
+                          flexWrap: "wrap"
+                        }}>
+                          <h4 style={{
+                            fontFamily: FN.d,
+                            fontSize: "18px",
+                            fontStyle: "italic",
+                            color: C.ok
+                          }}>{m.name}</h4>
+                          {m.role && (
+                            <Bdg color={C.tl}>{m.role}</Bdg>
+                          )}
+                        </div>
+                        {m.researchedCredits && (
+                          <div style={{ marginBottom: "10px" }}>
+                            <p style={{ ...LS, marginBottom: "4px" }}>CREDITS</p>
+                            <p style={{ fontSize: "13px", lineHeight: 1.6 }}>{m.researchedCredits}</p>
+                          </div>
+                        )}
+                        {m.awardsAndHonors && (
+                          <div style={{ marginBottom: "10px" }}>
+                            <p style={{ ...LS, marginBottom: "4px", color: C.wn }}>🏆 AWARDS & HONORS</p>
+                            <p style={{ fontSize: "13px", lineHeight: 1.6, color: C.wn }}>{m.awardsAndHonors}</p>
+                          </div>
+                        )}
+                        {m.industryStanding && (
+                          <div style={{ marginBottom: "10px" }}>
+                            <p style={{ ...LS, marginBottom: "4px" }}>INDUSTRY STANDING</p>
+                            <p style={{ fontSize: "13px", lineHeight: 1.6 }}>{m.industryStanding}</p>
+                          </div>
+                        )}
+                        {m.leveragePoints && (
+                          <div style={{ marginBottom: "10px" }}>
+                            <p style={{ ...LS, marginBottom: "4px", color: C.ac }}>🎯 LEVERAGE POINTS</p>
+                            <p style={{ fontSize: "13px", lineHeight: 1.6, color: C.tx }}>{m.leveragePoints}</p>
+                          </div>
+                        )}
+                        {m.unlockedOpportunities && (
+                          <div>
+                            <p style={{ ...LS, marginBottom: "4px", color: C.ok }}>🔓 UNLOCKED OPPORTUNITIES</p>
+                            <p style={{ fontSize: "13px", lineHeight: 1.6, color: C.ok }}>{m.unlockedOpportunities}</p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {a.team.collectiveLeverage && (
+                  <InfoBlock label="Collective Leverage" content={a.team.collectiveLeverage} color={C.ok} />
+                )}
+                {a.team.namesToForeground && (
+                  <InfoBlock label="Names to Foreground in Applications" content={a.team.namesToForeground} color={C.ok} />
+                )}
+                {a.team.researchGaps && (
+                  <div style={{
+                    marginTop: "12px",
+                    padding: "10px 12px",
+                    background: C.wn + "10",
+                    border: "1px solid " + C.wn + "30",
+                    borderRadius: "6px"
+                  }}>
+                    <p style={{ ...LS, color: C.wn, marginBottom: "4px" }}>⚠ RESEARCH GAPS</p>
+                    <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5 }}>{a.team.researchGaps}</p>
+                  </div>
+                )}
+              </Card>
+            )}
+
             <Card style={{ marginBottom: "16px", borderColor: C.pp + "30" }}>
               <h3 style={{
                 fontFamily: FN.d,
@@ -2657,6 +2817,23 @@ function DiscView({
                       marginBottom: "4px"
                     }}>STAGE MATCH</p>
                     <p style={{ fontSize: "12px", lineHeight: 1.5, color: C.tm }}>{o.stageEligibility}</p>
+                  </div>
+                )}
+                {o.teamAdvantage && (
+                  <div style={{
+                    background: C.ok + "10",
+                    border: "1px solid " + C.ok + "30",
+                    borderRadius: "6px",
+                    padding: "10px 12px",
+                    marginBottom: "10px"
+                  }}>
+                    <p style={{
+                      fontSize: "11px",
+                      fontFamily: FN.m,
+                      color: C.ok,
+                      marginBottom: "4px"
+                    }}>🔑 TEAM ADVANTAGE</p>
+                    <p style={{ fontSize: "12px", lineHeight: 1.5, color: C.tx }}>{o.teamAdvantage}</p>
                   </div>
                 )}
                 <div style={{
