@@ -4397,6 +4397,15 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
           </div>
           {isStale(app) && <Bdg color={C.wn}>STALE</Bdg>}
           <Bdg color={sc[app.status]}>{app.status}</Bdg>
+          {canEdit && (
+            <Btn
+              variant="ghost"
+              small
+              onClick={() => setRefreshMdl(view)}
+              disabled={isRefreshing(app.id)}
+              title="Re-run research and regenerate this application's content"
+            >{isRefreshing(app.id) ? "🔄 Refreshing..." : "🔄 Refresh"}</Btn>
+          )}
         </div>
 
         <Card style={{
@@ -5650,7 +5659,7 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
           {refreshMdl !== null && apps[refreshMdl] && (
             <div>
               <p style={{ fontSize: "13px", color: C.tm, lineHeight: 1.6, marginBottom: "16px" }}>
-                The latest project analysis for <strong style={{ color: C.tx }}>{apps[refreshMdl].projTitle}</strong> will be used to update this draft. Choose how:
+                Re-run the application for <strong style={{ color: C.tx }}>{apps[refreshMdl].projTitle}</strong> against <strong style={{ color: C.tx }}>{apps[refreshMdl].oppName}</strong>. The AI will re-research the opportunity's current requirements and update the draft. Choose how:
               </p>
 
               <div
