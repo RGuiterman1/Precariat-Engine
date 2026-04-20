@@ -6350,6 +6350,8 @@ function ProfView({ profile, save }) {
   const [keyVisible, setKeyVisible] = useState(false);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMsg, setBackupMsg] = useState("");
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupMsg, setCleanupMsg] = useState("");
 
   const doSave = () => {
     save(form);
@@ -6648,6 +6650,98 @@ function ProfView({ profile, save }) {
         <p style={{ fontSize: "11px", color: C.tm, marginTop: "10px" }}>
           Don't forget to click "Save All" at the top after editing.
         </p>
+      </Card>
+
+      <Card style={{ marginTop: "20px", borderColor: C.wn + "40" }}>
+        <h3 style={{
+          fontFamily: FN.d,
+          fontSize: "20px",
+          fontStyle: "italic",
+          marginBottom: "6px"
+        }}>🧹 Clean Up Citation Tags</h3>
+        <p style={{ fontSize: "12px", color: C.tm, marginBottom: "16px", lineHeight: 1.5 }}>
+          Older analyses and applications may contain <code style={{ background: C.bg, padding: "1px 6px", borderRadius: "3px", fontSize: "11px" }}>&lt;cite&gt;</code> tags, footnote markers <code style={{ background: C.bg, padding: "1px 6px", borderRadius: "3px", fontSize: "11px" }}>[1]</code>, or other markup that leaked in from web search research. New generations are automatically sanitized — but this button retroactively cleans every project analysis and application section already stored in your browser. Safe to run: it only strips markup, never touches actual content.
+        </p>
+        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
+          <Btn
+            disabled={cleanupBusy}
+            onClick={async () => {
+              if (!confirm("This will scan every project analysis and application in your browser and strip out cite tags, footnote markers, and HTML markup. Content text will be preserved. Export a backup first if you want a rollback option. Continue?")) {
+                return;
+              }
+              setCleanupBusy(true);
+              setCleanupMsg("");
+              try {
+                let projectsCleaned = 0;
+                let appsCleaned = 0;
+                let oppsCleaned = 0;
+
+                // Clean projects (analysis field)
+                const projsResult = await window.storage.get(SK.PROJECTS);
+                if (projsResult && projsResult.value) {
+                  const projs = JSON.parse(projsResult.value);
+                  const cleanedProjs = projs.map(p => {
+                    if (!p.analysis) return p;
+                    const before = JSON.stringify(p.analysis);
+                    const cleaned = sanitizeStrings(p.analysis);
+                    const after = JSON.stringify(cleaned);
+                    if (before !== after) projectsCleaned++;
+                    return { ...p, analysis: cleaned };
+                  });
+                  await window.storage.set(SK.PROJECTS, JSON.stringify(cleanedProjs));
+                }
+
+                // Clean applications (all fields, but especially content)
+                const appsResult = await window.storage.get(SK.APPS);
+                if (appsResult && appsResult.value) {
+                  const appsData = JSON.parse(appsResult.value);
+                  const cleanedApps = appsData.map(a => {
+                    const before = JSON.stringify(a);
+                    const cleaned = sanitizeStrings(a);
+                    const after = JSON.stringify(cleaned);
+                    if (before !== after) appsCleaned++;
+                    return cleaned;
+                  });
+                  await window.storage.set(SK.APPS, JSON.stringify(cleanedApps));
+                }
+
+                // Clean opportunities
+                const oppsResult = await window.storage.get(SK.OPPS);
+                if (oppsResult && oppsResult.value) {
+                  const oppsData = JSON.parse(oppsResult.value);
+                  const cleanedOpps = oppsData.map(o => {
+                    const before = JSON.stringify(o);
+                    const cleaned = sanitizeStrings(o);
+                    const after = JSON.stringify(cleaned);
+                    if (before !== after) oppsCleaned++;
+                    return cleaned;
+                  });
+                  await window.storage.set(SK.OPPS, JSON.stringify(cleanedOpps));
+                }
+
+                const total = projectsCleaned + appsCleaned + oppsCleaned;
+                if (total === 0) {
+                  setCleanupMsg("✓ Nothing to clean — your data was already tidy.");
+                } else {
+                  setCleanupMsg("✓ Cleaned " + projectsCleaned + " project analyses, " + appsCleaned + " applications, " + oppsCleaned + " opportunities. Reloading in 2 seconds to refresh the display...");
+                  setTimeout(() => window.location.reload(), 2000);
+                }
+              } catch (e) {
+                setCleanupMsg("✗ Cleanup failed: " + (e.message || "unknown error"));
+              } finally {
+                setCleanupBusy(false);
+              }
+            }}
+          >{cleanupBusy ? "Cleaning..." : "🧹 Scan & Clean All Data"}</Btn>
+          {cleanupMsg && (
+            <p style={{
+              fontSize: "12px",
+              color: cleanupMsg.startsWith("✓") ? C.ok : C.dn,
+              fontFamily: FN.m,
+              marginLeft: "8px"
+            }}>{cleanupMsg}</p>
+          )}
+        </div>
       </Card>
 
       <Card style={{ marginTop: "20px", borderColor: C.tl + "40" }}>
