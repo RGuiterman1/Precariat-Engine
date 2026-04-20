@@ -1351,13 +1351,17 @@ Before writing a single word of the application, you MUST use web search to rese
 5. Any specific framings, buzzwords, or priorities that recur in their materials
 6. Selection criteria — what do judges/committees explicitly score on?
 7. Any red flags or common reasons applications fail
-8. **THE EXACT APPLICATION REQUIREMENTS** — CRITICAL. Find the actual application form, guidelines, or submission instructions. Identify PRECISELY what this application asks for:
-   - Which standard sections do they require? (cover letter? project statement? artist/director statement? budget? impact? timeline?)
-   - Do they have different section names? (e.g., "Project Description" vs "Project Statement," "Director's Vision" vs "Artist Statement")
-   - Word/character limits per section
-   - Custom sections unique to this opportunity (e.g., "Community Engagement Plan," "Distribution Strategy," "Diversity Statement," "Letter of Interest")
-   - External materials the user must provide themselves (artwork, production stills, trailer/sizzle reel, pitch video, letters of recommendation, W9s, budget spreadsheets, work samples, IMDb links, etc.)
-   - **Account / membership prerequisites** — does this opportunity require the applicant to have an account or active membership with a specific platform? Common examples: Blacklist hosted evaluation, Sundance Institute account, Film Independent membership, FilmFreeway account, Coverfly profile, IMDb Pro listing, WGA registration, Stage 32 membership, Tracking Board, fiscal sponsor affiliation, 501(c)(3) status. Check the applicant's connected accounts list (provided in context) and flag which are met vs. which the applicant needs to create.
+8. **THE EXACT APPLICATION REQUIREMENTS** — CRITICAL. This is the most common failure point: applications get submitted with missing fields because the research was incomplete. You MUST follow all four sub-steps below. Skipping any of them is a failure.
+
+   **8a. FETCH THE ACTUAL SUBMISSION PAGE.** Do not rely on search snippets, press articles, or descriptions of the program. Use web search to find the direct URL where applicants actually submit — typically a page like "${o.organization} [program name] apply" or "${o.organization} submission guidelines" — and read the full page. If the submission portal requires login and you cannot see the field list directly, find any FAQ, guidelines PDF, or alumni writeup that enumerates what the application asks for.
+
+   **8b. ENUMERATE EVERY FIELD THE APPLICATION ASKS FOR.** List each field by its exact name as the application calls it. Include word/character limits where stated. Do not paraphrase — capture the actual labels. Common fields to watch for that are EASILY MISSED: logline, short synopsis, long synopsis, personal statement, director's statement, artist statement, bios (director, producer, key team), comparable films, target audience, distribution plan, budget range, budget narrative/justification, mood board or visual reference upload, screenplay PDF upload, budget top sheet upload, W9 or tax forms, fiscal sponsor documentation, work samples or past film links.
+
+   **8c. MAP EACH FIELD TO AN OUTPUT KEY.** For every field enumerated in 8b, decide: does it map to one of the standard keys (coverLetter, projectStatement, artistStatement, directorsStatement, personalStatement, logline, shortSynopsis, longSynopsis, budgetJustification, impactStatement, timeline, comparableFilms, targetAudience, distributionStrategy, bios)? If yes, add that key to standardSectionsNeeded. If it does not map cleanly to a standard key, create a customSection entry using the application's exact field name as the title. Do NOT drop a field on the floor because it does not fit a standard key — use customSections.
+
+   **8d. COMPLETENESS CHECK.** Before finalizing, ask yourself explicitly: "For a [program type] of this prestige level, what other fields would I typically expect to see? Do I have them all accounted for?" If Gotham-level project markets typically ask for logline + synopsis + personal statement + bios + budget + screenplay, and I only have "cover letter" on my list, something is wrong — search again. Err on the side of over-including rather than under-including: if you're unsure whether something is required, include it and note in requirements.additionalInstructions that the user should verify before submitting.
+
+   **8e. ACCOUNT / MEMBERSHIP PREREQUISITES.** Does this opportunity require the applicant to have an account or active membership with a specific platform? Common examples: Blacklist hosted evaluation, Sundance Institute account, Film Independent membership, Gotham Film & Media Institute membership, FilmFreeway account, Coverfly profile, IMDb Pro listing, WGA registration, Stage 32 membership, Tracking Board, fiscal sponsor affiliation, 501(c)(3) status. Check the applicant's connected accounts list (provided in context) and flag which are met vs. which the applicant needs to create.
 
 Search broadly. Read multiple pages. Do NOT skip this step.
 
@@ -1424,7 +1428,7 @@ Web search is a RESEARCH TOOL for you to gather facts. Once you have the facts, 
   },
   "requirements": {
     "summary": "2-3 sentences describing exactly what this application asks for — reflect what you found in your research about their actual submission form/guidelines",
-    "standardSectionsNeeded": "Array of which STANDARD section keys are actually required by this opportunity. Only include the ones they ask for. Possible keys: coverLetter, projectStatement, artistStatement, budgetJustification, impactStatement, timeline. Example: ['coverLetter', 'projectStatement', 'budgetJustification'] if they only want those three. Return empty array if none are clearly needed.",
+    "standardSectionsNeeded": "Array of which STANDARD section keys are actually required by this opportunity. Only include the ones they ask for. Possible keys: coverLetter, projectStatement, artistStatement, directorsStatement, personalStatement, logline, shortSynopsis, longSynopsis, budgetJustification, impactStatement, timeline, comparableFilms, targetAudience, distributionStrategy, bios. Example: ['coverLetter', 'projectStatement', 'budgetJustification'] if they only want those three. If the application asks for something that does not map cleanly to these keys, use customSections for it instead — but do NOT leave a required field off the list. Return empty array ONLY if you genuinely cannot determine any requirements.",
     "wordLimits": "Object mapping section keys to word/character limits. E.g., { 'projectStatement': '500 words', 'artistStatement': '300 words' }. Only include keys that have explicit limits.",
     "additionalInstructions": "Any special formatting or content instructions per section"
   },
@@ -1432,9 +1436,18 @@ Web search is a RESEARCH TOOL for you to gather facts. Once you have the facts, 
   "coverLetter": "Only generate if coverLetter is in standardSectionsNeeded. Otherwise return empty string.",
   "projectStatement": "Only generate if projectStatement is in standardSectionsNeeded. Otherwise return empty string.",
   "artistStatement": "Only generate if artistStatement is in standardSectionsNeeded. Otherwise return empty string.",
+  "directorsStatement": "Only generate if directorsStatement is in standardSectionsNeeded. Otherwise return empty string. Director(s) speaking about their vision for the film — typically 500-1000 words, first-person or first-person-plural if co-directed.",
+  "personalStatement": "Only generate if personalStatement is in standardSectionsNeeded. Otherwise return empty string. Personal reflection on why this filmmaker is making this film now — typically 500-700 words.",
+  "logline": "Only generate if logline is in standardSectionsNeeded. Otherwise return empty string. One sentence, under 50 words.",
+  "shortSynopsis": "Only generate if shortSynopsis is in standardSectionsNeeded. Otherwise return empty string. Typically 100-200 words.",
+  "longSynopsis": "Only generate if longSynopsis is in standardSectionsNeeded. Otherwise return empty string. Typically 400-800 words, full plot including ending.",
   "budgetJustification": "Only generate if budgetJustification is in standardSectionsNeeded. Otherwise return empty string.",
   "impactStatement": "Only generate if impactStatement is in standardSectionsNeeded. Otherwise return empty string.",
   "timeline": "Only generate if timeline is in standardSectionsNeeded. Otherwise return empty string.",
+  "comparableFilms": "Only generate if comparableFilms is in standardSectionsNeeded. Otherwise return empty string. 3-5 specific films with years, distributors, box office or awards where available, and 1 sentence each on why they are relevant comparables.",
+  "targetAudience": "Only generate if targetAudience is in standardSectionsNeeded. Otherwise return empty string. Specific description of who the film is for.",
+  "distributionStrategy": "Only generate if distributionStrategy is in standardSectionsNeeded. Otherwise return empty string. Festival plan, distributor targets, market positioning.",
+  "bios": "Only generate if bios is in standardSectionsNeeded. Otherwise return empty string. Third-person biographies of key creative team, each 75-150 words. Format as 'NAME — ROLE\n\nBio text.' separated by double newlines.",
   "customSections": [
     {
       "key": "camelCaseKey (unique identifier, e.g. 'communityEngagement')",
@@ -1619,7 +1632,16 @@ PROJECT
 
 ${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review carefully and reference specific scenes, visuals, characters, or moments from them — not vague summaries." : ""}
 
-STEP 1 — RESEARCH (REQUIRED): Use web search to research "${app.oppName}" at "${app.oppOrg}". Find their mission, past recipients, aesthetic preferences, tone, selection criteria, AND — critically — the EXACT application requirements: which sections are asked for, word limits, custom sections unique to this opportunity, and any external materials (artwork, letters of rec, pitch videos, etc.) the applicant must provide themselves.
+STEP 1 — RESEARCH (REQUIRED): Use web search to research "${app.oppName}" at "${app.oppOrg}". Find their mission, past recipients, aesthetic preferences, tone, selection criteria, AND — critically — the EXACT application requirements.
+
+**REQUIREMENTS EXTRACTION is the most common failure point.** You MUST:
+(a) Fetch the actual submission page — not just press snippets or descriptions.
+(b) Enumerate every field the application asks for, by exact name.
+(c) Map each field to a standard key OR create a customSection for it — do NOT drop fields on the floor.
+(d) Completeness check: for a program of this type and prestige, are there standard fields you might be missing? (Common easily-missed: logline, short synopsis, long synopsis, personal statement, director's statement, bios, comparable films, target audience, distribution plan, budget narrative, screenplay PDF upload.)
+(e) Err on the side of over-including — if unsure, include it and flag in additionalInstructions.
+
+Also identify external materials (artwork, letters of rec, pitch videos, etc.) the applicant must provide, and any account/membership prerequisites.
 
 STEP 2 — WRITE: Only generate the sections this opportunity actually requires. Don't write generic boilerplate for sections not asked for. Every section must match the org's voice, respect any word limits, and answer "why THIS project for THIS opportunity."
 
@@ -1638,7 +1660,7 @@ JSON schema:
   },
   "requirements": {
     "summary": "2-3 sentences describing exactly what this application asks for",
-    "standardSectionsNeeded": "Array of standard keys the opp actually requires: ['coverLetter','projectStatement','artistStatement','budgetJustification','impactStatement','timeline']. Include only the ones they ask for.",
+    "standardSectionsNeeded": "Array of standard keys the opp actually requires. Possible keys: coverLetter, projectStatement, artistStatement, directorsStatement, personalStatement, logline, shortSynopsis, longSynopsis, budgetJustification, impactStatement, timeline, comparableFilms, targetAudience, distributionStrategy, bios. Include only the ones they ask for. Use customSections for any field that does not map to these keys.",
     "wordLimits": "Object mapping section keys to limits, e.g. { 'projectStatement': '500 words' }",
     "additionalInstructions": "Any special formatting/content notes"
   },
@@ -1646,9 +1668,18 @@ JSON schema:
   "coverLetter": "Only if in standardSectionsNeeded, else empty string",
   "projectStatement": "Only if in standardSectionsNeeded, else empty string",
   "artistStatement": "Only if in standardSectionsNeeded, else empty string",
+  "directorsStatement": "Only if in standardSectionsNeeded, else empty string",
+  "personalStatement": "Only if in standardSectionsNeeded, else empty string",
+  "logline": "Only if in standardSectionsNeeded, else empty string",
+  "shortSynopsis": "Only if in standardSectionsNeeded, else empty string",
+  "longSynopsis": "Only if in standardSectionsNeeded, else empty string",
   "budgetJustification": "Only if in standardSectionsNeeded, else empty string",
   "impactStatement": "Only if in standardSectionsNeeded, else empty string",
   "timeline": "Only if in standardSectionsNeeded, else empty string",
+  "comparableFilms": "Only if in standardSectionsNeeded, else empty string",
+  "targetAudience": "Only if in standardSectionsNeeded, else empty string",
+  "distributionStrategy": "Only if in standardSectionsNeeded, else empty string",
+  "bios": "Only if in standardSectionsNeeded, else empty string",
   "customSections": [
     { "key": "camelCaseKey", "title": "Human Title", "wordLimit": "...", "content": "..." }
   ],
@@ -1732,9 +1763,18 @@ JSON schema:
   "coverLetter": "Preserve or update — only if in standardSectionsNeeded",
   "projectStatement": "Preserve or update — only if in standardSectionsNeeded",
   "artistStatement": "Preserve or update — only if in standardSectionsNeeded",
+  "directorsStatement": "Preserve or update — only if in standardSectionsNeeded",
+  "personalStatement": "Preserve or update — only if in standardSectionsNeeded",
+  "logline": "Preserve or update — only if in standardSectionsNeeded",
+  "shortSynopsis": "Preserve or update — only if in standardSectionsNeeded",
+  "longSynopsis": "Preserve or update — only if in standardSectionsNeeded",
   "budgetJustification": "Preserve or update — only if in standardSectionsNeeded",
   "impactStatement": "Preserve or update — only if in standardSectionsNeeded",
   "timeline": "Preserve or update — only if in standardSectionsNeeded",
+  "comparableFilms": "Preserve or update — only if in standardSectionsNeeded",
+  "targetAudience": "Preserve or update — only if in standardSectionsNeeded",
+  "distributionStrategy": "Preserve or update — only if in standardSectionsNeeded",
+  "bios": "Preserve or update — only if in standardSectionsNeeded",
   "customSections": "Preserve existing custom sections with updated content where needed",
   "externalMaterials": "Preserve existing external materials list, updating only if requirements changed",
   "accountsRequired": "Preserve existing account requirements, updating only if your re-research reveals changes. Cross-reference against the connected accounts list provided.",
@@ -4179,14 +4219,23 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
   if (view !== null && apps[view]) {
     const app = apps[view];
     const c = app.content || {};
-    // Standard section metadata
+    // Standard section metadata — kept in sync with the generate prompt's standardSectionsNeeded enum
     const standardSectionMeta = {
       coverLetter: "Cover Letter",
       projectStatement: "Project Statement",
       artistStatement: "Artist Statement",
+      directorsStatement: "Director's Statement",
+      personalStatement: "Personal Statement",
+      logline: "Logline",
+      shortSynopsis: "Short Synopsis",
+      longSynopsis: "Long Synopsis",
       budgetJustification: "Budget Justification",
       impactStatement: "Impact Statement",
-      timeline: "Timeline"
+      timeline: "Timeline",
+      comparableFilms: "Comparable Films",
+      targetAudience: "Target Audience",
+      distributionStrategy: "Distribution Strategy",
+      bios: "Bios"
     };
     const allStandardKeys = Object.keys(standardSectionMeta);
 
@@ -4609,9 +4658,20 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
               color: C.ac,
               marginBottom: "4px"
             }}>📋 What This Application Requires</h3>
-            <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "14px" }}>
+            <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "10px" }}>
               Based on the AI's research of this opportunity's actual submission guidelines
             </p>
+            <div style={{
+              padding: "10px 12px",
+              background: C.wn + "12",
+              border: "1px solid " + C.wn + "40",
+              borderRadius: "6px",
+              marginBottom: "14px"
+            }}>
+              <p style={{ fontSize: "11px", color: C.tx, lineHeight: 1.5, fontFamily: FN.m }}>
+                ⚠ <strong>Verify before submitting.</strong> The AI's requirements research is not always complete — occasionally it misses fields or mislabels them. Before you submit, open the opportunity's actual application portal and confirm every field is accounted for. If you find a missing field, use Refresh → Regenerate to re-research, or add it as a custom section by editing this application.
+              </p>
+            </div>
             {c.requirements.summary && (
               <p style={{
                 fontSize: "13px",
