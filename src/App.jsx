@@ -6555,9 +6555,20 @@ function ProfView({ profile, save }) {
           fontStyle: "italic",
           marginBottom: "6px"
         }}>🔗 Connected Accounts & Memberships</h3>
-        <p style={{ fontSize: "12px", color: C.tm, marginBottom: "16px", lineHeight: 1.5 }}>
-          Track accounts and memberships you hold on industry platforms (Blacklist, Sundance Institute, Film Independent, IMDb Pro, FilmFreeway, WithoutABox, Coverfly, Stage 32, etc.). When an application requires one of these, the AI will cross-reference this list and tell you if you're already covered or need to sign up.
+        <p style={{ fontSize: "12px", color: C.tm, marginBottom: "10px", lineHeight: 1.5 }}>
+          A reference list of platforms where you already hold an account (Blacklist, Sundance Institute, Film Independent, IMDb Pro, FilmFreeway, Coverfly, Stage 32, etc.). The AI cross-references this list when researching opportunities — if a grant requires a Blacklist account and you've listed one here, it won't flag that as a missing prerequisite.
         </p>
+        <div style={{
+          padding: "10px 12px",
+          background: C.pp + "10",
+          border: "1px solid " + C.pp + "30",
+          borderRadius: "6px",
+          marginBottom: "16px"
+        }}>
+          <p style={{ fontSize: "11px", color: C.tx, lineHeight: 1.5 }}>
+            🔒 <strong>Never enter passwords here.</strong> This is a knowledge list, not a password manager. Click the ↗ Login button to open the platform in a new tab, then sign in there. Use 1Password, Bitwarden, or your browser's password manager for credentials.
+          </p>
+        </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "14px" }}>
           {(form.connectedAccounts || []).map((acc, i) => (
             <div key={i} style={{
@@ -6627,6 +6638,47 @@ function ProfView({ profile, save }) {
                     }}
                   />
                 </div>
+                <Btn
+                  variant="ghost"
+                  small
+                  onClick={() => {
+                    // Known platform login URLs — more reliable than user-pasted profile URLs
+                    const loginMap = [
+                      { match: /blacklist|black\s*list|blcklst/i, url: "https://blcklst.com/login" },
+                      { match: /sundance/i, url: "https://collab.sundance.org/s/login/" },
+                      { match: /film\s*independent|filmindependent/i, url: "https://www.filmindependent.org/login/" },
+                      { match: /imdb\s*pro|imdbpro/i, url: "https://pro.imdb.com/login" },
+                      { match: /film\s*freeway|filmfreeway/i, url: "https://filmfreeway.com/login" },
+                      { match: /coverfly/i, url: "https://writers.coverfly.com/login" },
+                      { match: /stage\s*32|stage32/i, url: "https://www.stage32.com/login" },
+                      { match: /wga|writers\s*guild/i, url: "https://www.wga.org/members/login" },
+                      { match: /tracking\s*board/i, url: "https://www.trackingb.com/login" },
+                      { match: /final\s*draft/i, url: "https://www.finaldraft.com/account/login/" },
+                      { match: /withoutabox/i, url: "https://www.withoutabox.com/login" }
+                    ];
+                    const name = (acc.name || "").trim();
+                    const url = (acc.url || "").trim();
+
+                    // 1. Try a known-platform match on the name
+                    const known = loginMap.find(p => p.match.test(name));
+                    if (known) {
+                      window.open(known.url, "_blank", "noopener,noreferrer");
+                      return;
+                    }
+                    // 2. Fall back to user-provided URL
+                    if (url) {
+                      // Normalize: add https:// if missing
+                      const normalized = /^https?:\/\//i.test(url) ? url : "https://" + url;
+                      window.open(normalized, "_blank", "noopener,noreferrer");
+                      return;
+                    }
+                    // 3. Nothing to open
+                    alert("No URL saved for this account, and the platform name isn't recognized. Add a URL to the account to use the Login button.");
+                  }}
+                  title="Open login page in a new tab"
+                  disabled={!acc.name && !acc.url}
+                  style={{ color: C.ac }}
+                >↗ Login</Btn>
                 <Btn
                   variant="ghost"
                   small
