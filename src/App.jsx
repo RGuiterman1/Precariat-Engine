@@ -4643,6 +4643,185 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
           </Card>
         )}
 
+        {(() => {
+          // Video Links card — user-managed list of URLs for pitch videos, reels, past films, etc.
+          const videoLinks = Array.isArray(app.videoLinks) ? app.videoLinks : [];
+          const updateVideoLinks = (next) => {
+            const updated = [...apps];
+            updated[view] = {
+              ...updated[view],
+              videoLinks: next,
+              editedAt: new Date().toISOString()
+            };
+            save(updated);
+          };
+          const addLink = () => {
+            updateVideoLinks([
+              ...videoLinks,
+              { id: Date.now().toString() + "-" + Math.random().toString(36).slice(2, 6), label: "", url: "", password: "", kind: "pitch", notes: "" }
+            ]);
+          };
+          const updateLink = (idx, patch) => {
+            const next = videoLinks.map((l, i) => i === idx ? { ...l, ...patch } : l);
+            updateVideoLinks(next);
+          };
+          const removeLink = (idx) => {
+            updateVideoLinks(videoLinks.filter((_, i) => i !== idx));
+          };
+          const copyToClipboard = async (text) => {
+            try {
+              await navigator.clipboard.writeText(text);
+            } catch (e) {
+              // Fallback for older browsers
+              const ta = document.createElement("textarea");
+              ta.value = text;
+              document.body.appendChild(ta);
+              ta.select();
+              try { document.execCommand("copy"); } catch (e2) {}
+              document.body.removeChild(ta);
+            }
+          };
+          return (
+            <Card style={{
+              marginBottom: "12px",
+              borderColor: C.tl + "40",
+              background: C.tl + "06"
+            }}>
+              <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "4px"
+              }}>
+                <h3 style={{
+                  fontFamily: FN.d,
+                  fontSize: "18px",
+                  fontStyle: "italic",
+                  color: C.tl
+                }}>🎬 Video Links</h3>
+                {videoLinks.length > 0 && (
+                  <Bdg color={C.tl}>{videoLinks.length} link{videoLinks.length === 1 ? "" : "s"}</Bdg>
+                )}
+              </div>
+              <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "14px" }}>
+                Store pitch videos, sizzle reels, past film links, and work samples for this application. Paste in URL and password (if password-protected) so it's all in one place when you submit.
+              </p>
+              {videoLinks.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "14px" }}>
+                  {videoLinks.map((link, i) => (
+                    <div key={link.id || i} style={{
+                      background: C.bg,
+                      padding: "12px 14px",
+                      borderRadius: "6px",
+                      borderLeft: "3px solid " + C.tl
+                    }}>
+                      <div style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: "8px",
+                        marginBottom: "8px"
+                      }}>
+                        <div>
+                          <label style={LS}>Label</label>
+                          <input
+                            value={link.label || ""}
+                            placeholder="e.g. Pitch video, Canvas trailer"
+                            onChange={e => updateLink(i, { label: e.target.value })}
+                          />
+                        </div>
+                        <div>
+                          <label style={LS}>Type</label>
+                          <select
+                            value={link.kind || "pitch"}
+                            onChange={e => updateLink(i, { kind: e.target.value })}
+                          >
+                            <option value="pitch">🎯 Pitch Video</option>
+                            <option value="reel">🎞 Sizzle Reel / Director's Reel</option>
+                            <option value="pastFilm">🎬 Past Film / Work Sample</option>
+                            <option value="proofOfConcept">💡 Proof of Concept</option>
+                            <option value="teaser">▶ Teaser / Trailer</option>
+                            <option value="other">📎 Other</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ marginBottom: "8px" }}>
+                        <label style={LS}>URL</label>
+                        <div style={{ display: "flex", gap: "6px" }}>
+                          <input
+                            value={link.url || ""}
+                            placeholder="https://vimeo.com/... or https://youtube.com/..."
+                            onChange={e => updateLink(i, { url: e.target.value })}
+                            style={{ flex: 1 }}
+                          />
+                          {link.url && (
+                            <>
+                              <Btn
+                                variant="ghost"
+                                small
+                                onClick={() => copyToClipboard(link.url)}
+                                title="Copy URL to clipboard"
+                              >📋</Btn>
+                              <Btn
+                                variant="ghost"
+                                small
+                                onClick={() => window.open(link.url, "_blank")}
+                                title="Open in new tab"
+                              >↗</Btn>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <div style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr auto",
+                        gap: "8px",
+                        alignItems: "end"
+                      }}>
+                        <div>
+                          <label style={LS}>Password (if any)</label>
+                          <div style={{ display: "flex", gap: "6px" }}>
+                            <input
+                              value={link.password || ""}
+                              placeholder="Leave blank if public"
+                              onChange={e => updateLink(i, { password: e.target.value })}
+                              style={{ flex: 1 }}
+                            />
+                            {link.password && (
+                              <Btn
+                                variant="ghost"
+                                small
+                                onClick={() => copyToClipboard(link.password)}
+                                title="Copy password"
+                              >📋</Btn>
+                            )}
+                          </div>
+                        </div>
+                        <div>
+                          <label style={LS}>Notes (optional)</label>
+                          <input
+                            value={link.notes || ""}
+                            placeholder="e.g. 3 min cut, expires May 1"
+                            onChange={e => updateLink(i, { notes: e.target.value })}
+                          />
+                        </div>
+                        <Btn
+                          variant="ghost"
+                          small
+                          onClick={() => {
+                            if (confirm("Remove this video link?")) removeLink(i);
+                          }}
+                          style={{ color: C.dn }}
+                        >✗</Btn>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <Btn variant="secondary" small onClick={addLink}>+ Add Video Link</Btn>
+            </Card>
+          );
+        })()}
+
         {c.accountsRequired && Array.isArray(c.accountsRequired) && c.accountsRequired.length > 0 && (() => {
           const userAccounts = (profile.connectedAccounts || []).map(a => (a.name || "").toLowerCase().trim());
           const withStatus = c.accountsRequired.map(acc => {
@@ -5833,6 +6012,9 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                     {app.hadAnalysis && <span>🔬</span>}
                     {app.hadFiles && <span>📎</span>}
                     {app.deepResearch && <span title="Deep opportunity research">🔍</span>}
+                    {Array.isArray(app.videoLinks) && app.videoLinks.length > 0 && (
+                      <span title={app.videoLinks.length + " video link" + (app.videoLinks.length === 1 ? "" : "s")}>🎬</span>
+                    )}
                     {isStale(app) && <Bdg color={C.wn}>STALE</Bdg>}
                     {app.outcome === "won" && <Bdg color={C.ok}>🏆 WON</Bdg>}
                     {app.outcome === "rejected" && <Bdg color={C.dn}>✗ REJECTED</Bdg>}
