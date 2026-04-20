@@ -417,7 +417,47 @@ async function askClaude(content, search, attempt = 0) {
   return text;
 }
 
+// Strip citation markup and HTML tags from AI output that was rendered as text.
+// Walks the parsed JSON structure and cleans every string value in place.
+// This is belt-and-suspenders defense — prompts already tell the AI not to emit
+// cite tags, but model behavior can vary so we sanitize on ingest.
+function sanitizeStrings(obj) {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === "string") {
+    return obj
+      // Strip cite tags with any attributes: <cite>, <cite index="1">, </cite>
+      .replace(/<\/?cite[^>]*>/gi, "")
+      // Strip antml citation wrappers: , , etc
+      .replace(/<\/?antml:[^>]*>/gi, "")
+      // Strip generic HTML/XML-ish tags that the AI sometimes adds (be conservative
+      // — only strip tags we know are decorative, not things like <3 or math)
+      .replace(/<\/?(b|i|em|strong|u|span|a|sup|sub|mark|small|div|p|br)(\s[^>]*)?>/gi, "")
+      // Strip footnote markers like [1], [^2], [23] when they appear as citations
+      // (only at word boundaries, only with digits inside)
+      .replace(/\[\^?\d+\]/g, "")
+      // Collapse multiple spaces left behind by tag stripping
+      .replace(/[ \t]+/g, " ")
+      // Fix space before punctuation left by stripped tags
+      .replace(/ ([,.;:!?])/g, "$1")
+      .trim();
+  }
+  if (Array.isArray(obj)) return obj.map(sanitizeStrings);
+  if (typeof obj === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) {
+      out[k] = sanitizeStrings(v);
+    }
+    return out;
+  }
+  return obj;
+}
+
 function extractJSON(text) {
+  const result = extractJSONRaw(text);
+  return result === null ? null : sanitizeStrings(result);
+}
+
+function extractJSONRaw(text) {
   // Strip markdown fences
   let clean = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
 
@@ -979,6 +1019,16 @@ Extract names from:
 ═══════════════════════════════════════════════════════════
 OUTPUT FORMAT (JSON only, no markdown, no backticks)
 ═══════════════════════════════════════════════════════════
+🚨 CRITICAL FORMATTING RULE: Your response must be PLAIN TEXT inside JSON string values. Do NOT include ANY of the following in your output:
+• No <cite> tags or citation markup of any kind
+• No  or similar XML/HTML citation wrappers
+• No footnote-style markers like [1], [2], [^1], or superscripts
+• No HTML tags of any kind (<b>, <em>, <a>, <span>, etc.)
+• No markdown syntax (**, __, [text](url), etc.)
+• No source attributions like "(Source: ...)" embedded in the text
+
+Web search is a RESEARCH TOOL for you to gather facts. Once you have the facts, write them as clean prose in the JSON values. If you want to convey where info came from, mention the source in natural language within the research field itself (e.g., "According to IMDb, she produced..." or "Per Variety's 2024 coverage, the film..."). But NO markup, NO tags, NO citation wrappers. The JSON values are displayed directly in a UI and any markup will render as ugly raw text.
+
 {
   "team": {
     "members": [
@@ -1166,7 +1216,11 @@ This project is currently in "${p.stage}" stage. ${stageRule}
 
 Before returning ANY opportunity, verify it explicitly accepts projects in "${p.stage}" stage. If an opportunity requires a different stage, EXCLUDE IT. It is better to return fewer results than to include mismatched opportunities.
 
-Respond ONLY with a JSON array. Each object must have:
+Respond ONLY with a JSON array.
+
+🚨 CRITICAL FORMATTING RULE: All string values in the JSON must be PLAIN TEXT. Do NOT include <cite> tags,  wrappers, footnote markers [1][2], HTML tags, markdown, or any other markup. Web search is for research — the output must be clean prose.
+
+Each object must have:
 - "name", "organization"
 - "type" ("Grant"|"Festival"|"Lab"|"Fellowship"|"Residency")
 - "deadline" (specific date like "June 15, 2026" when available)
@@ -1350,6 +1404,16 @@ Armed with your research, write each section with these mandates:
 ═══════════════════════════════════════════════════════════
 OUTPUT FORMAT (JSON only, no markdown, no backticks)
 ═══════════════════════════════════════════════════════════
+🚨 CRITICAL FORMATTING RULE: Your response must be PLAIN TEXT inside JSON string values. Do NOT include ANY of the following in your output:
+• No <cite> tags or citation markup of any kind
+• No  or similar XML/HTML citation wrappers
+• No footnote-style markers like [1], [2], [^1], or superscripts
+• No HTML tags of any kind (<b>, <em>, <a>, <span>, etc.)
+• No markdown syntax (**, __, [text](url), etc.)
+• No source attributions like "(Source: ...)" embedded in the text
+
+Web search is a RESEARCH TOOL for you to gather facts. Once you have the facts, write them as clean prose in the JSON values. If you want to convey where info came from, mention the source in natural language within the research field itself (e.g., "According to IMDb, she produced..." or "Per Variety's 2024 coverage, the film..."). But NO markup, NO tags, NO citation wrappers. The JSON values are displayed directly in a UI and any markup will render as ugly raw text.
+
 {
   "research": {
     "orgMission": "1-2 sentences on what this organization stands for based on your research",
@@ -1559,7 +1623,11 @@ STEP 1 — RESEARCH (REQUIRED): Use web search to research "${app.oppName}" at "
 
 STEP 2 — WRITE: Only generate the sections this opportunity actually requires. Don't write generic boilerplate for sections not asked for. Every section must match the org's voice, respect any word limits, and answer "why THIS project for THIS opportunity."
 
-Respond ONLY with JSON (no markdown):
+Respond ONLY with JSON (no markdown).
+
+🚨 CRITICAL FORMATTING RULE: All string values in the JSON must be PLAIN TEXT. Do NOT include <cite> tags,  wrappers, footnote markers [1][2], HTML tags (<b>, <em>, <a>, etc.), or markdown (**bold**, __italic__). Web search is for research — the output must be clean prose ready to appear in a UI. Written sections will be pasted directly into grant applications so ANY markup would be unacceptable.
+
+JSON schema:
 {
   "research": {
     "orgMission": "1-2 sentences on what this org stands for",
@@ -1641,7 +1709,11 @@ CRITICAL AUGMENTATION RULES
 6. **PRESERVE REQUIREMENTS**: The existing draft has a 'requirements' field showing which sections this opportunity actually asks for, plus 'customSections' and 'externalMaterials'. Preserve these unless your re-research reveals the opportunity's requirements have changed. If they have changed, update them.
 7. **DO NOT add standard sections that aren't in requirements.standardSectionsNeeded**. Only update sections the opportunity actually asks for.
 
-Respond ONLY with JSON (no markdown):
+Respond ONLY with JSON (no markdown).
+
+🚨 CRITICAL FORMATTING RULE: All string values in the JSON must be PLAIN TEXT. Do NOT include <cite> tags,  wrappers, footnote markers [1][2], HTML tags (<b>, <em>, <a>, etc.), or markdown (**bold**, __italic__). Web search is for research — the output must be clean prose ready to appear in a UI. Written sections will be pasted directly into grant applications so ANY markup would be unacceptable.
+
+JSON schema:
 {
   "research": {
     "orgMission": "Updated understanding of the org's mission",
