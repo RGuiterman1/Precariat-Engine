@@ -10,7 +10,8 @@ const SK = {
   OPPS: "pre-opps",
   APPS: "pre-apps",
   PAY: "pre-pay",
-  FILES: "pre-files"
+  FILES: "pre-files",
+  FIELD_LIB: "pre-field-library"
 };
 
 const DEF_PROFILE = {
@@ -817,6 +818,16 @@ function AppMain() {
   const [pay, setPay] = useState(DEF_PAY);
   const [ready, setReady] = useState(false);
 
+  // Field library: remembered form field lists per opportunity so the engine
+  // doesn't have to re-discover fields each time. Structure:
+  //   { "opportunity-name|organization": {
+  //       fields: [{ fieldName, wordLimit, description, sourceUrl }],
+  //       savedAt: ISO string,
+  //       verified: boolean,
+  //       notes: string
+  //     }, ... }
+  const [fieldLibrary, setFieldLibrary] = useState({});
+
   // Background jobs system — operations continue running when you switch tabs
   const [jobs, setJobs] = useState([]);
   // job = { id, kind: "analyze"|"search"|"generate", status: "running"|"error", label, error, startedAt, meta }
@@ -834,17 +845,19 @@ function AppMain() {
   const payRef = React.useRef(pay);
   const profileRef = React.useRef(profile);
   const oppsRef = React.useRef(opps);
+  const fieldLibraryRef = React.useRef(fieldLibrary);
 
   useEffect(() => { projectsRef.current = projects; }, [projects]);
   useEffect(() => { appsRef.current = apps; }, [apps]);
   useEffect(() => { payRef.current = pay; }, [pay]);
   useEffect(() => { profileRef.current = profile; }, [profile]);
   useEffect(() => { oppsRef.current = opps; }, [opps]);
+  useEffect(() => { fieldLibraryRef.current = fieldLibrary; }, [fieldLibrary]);
 
   useEffect(() => {
     (async () => {
       try {
-        const keys = [SK.PROFILE, SK.PROJECTS, SK.OPPS, SK.APPS, SK.PAY];
+        const keys = [SK.PROFILE, SK.PROJECTS, SK.OPPS, SK.APPS, SK.PAY, SK.FIELD_LIB];
         const results = await Promise.all(
           keys.map(k => window.storage.get(k).catch(() => null))
         );
@@ -876,6 +889,7 @@ function AppMain() {
           }
         }
         if (results[4] && results[4].value) setPay(JSON.parse(results[4].value));
+        if (results[5] && results[5].value) setFieldLibrary(JSON.parse(results[5].value));
       } catch (err) {
         console.error(err);
       }
@@ -897,6 +911,60 @@ function AppMain() {
   const sOpps = makeSaver(SK.OPPS, setOpps);
   const sApps = makeSaver(SK.APPS, setApps);
   const sPay = makeSaver(SK.PAY, setPay);
+  const sFieldLibrary = makeSaver(SK.FIELD_LIB, setFieldLibrary);
+
+  // Normalize an opportunity name+org pair into a stable library key.
+  // Case-insensitive, whitespace-collapsed, with a | separator.
+  const libKey = (name, org) => {
+    return ((name || "").toLowerCase().trim().replace(/\s+/g, " ") +
+            "|" +
+            (org || "").toLowerCase().trim().replace(/\s+/g, " "));
+  };
+
+  // Save a field list to the library for a specific opportunity
+  const saveFieldsToLibrary = (oppName, oppOrg, fields, verified) => {
+    const key = libKey(oppName, oppOrg);
+    const currentLib = fieldLibraryRef.current || {};
+    const existing = currentLib[key];
+    const entry = {
+      oppName,
+      oppOrg,
+      fields: fields.map(f => ({
+        fieldName: f.fieldName || "",
+        wordLimit: f.wordLimit || "unspecified",
+        description: f.description || "",
+        sourceUrl: f.sourceUrl || ""
+      })),
+      savedAt: new Date().toISOString(),
+      verified: !!verified,
+      notes: existing ? existing.notes : ""
+    };
+    sFieldLibrary({ ...currentLib, [key]: entry });
+  };
+
+  // Look up a field list from the library for a specific opportunity
+  const getFieldsFromLibrary = (oppName, oppOrg) => {
+    const key = libKey(oppName, oppOrg);
+    const currentLib = fieldLibraryRef.current || {};
+    return currentLib[key] || null;
+  };
+
+  // Delete a library entry
+  const deleteFieldLibraryEntry = (oppName, oppOrg) => {
+    const key = libKey(oppName, oppOrg);
+    const currentLib = fieldLibraryRef.current || {};
+    const updated = { ...currentLib };
+    delete updated[key];
+    sFieldLibrary(updated);
+  };
+
+  // Update notes on a library entry
+  const updateFieldLibraryNotes = (oppName, oppOrg, notes) => {
+    const key = libKey(oppName, oppOrg);
+    const currentLib = fieldLibraryRef.current || {};
+    if (!currentLib[key]) return;
+    sFieldLibrary({ ...currentLib, [key]: { ...currentLib[key], notes } });
+  };
 
   // Jobs helpers
   const addJob = (job) => {
@@ -1502,6 +1570,13 @@ No generic language. No boilerplate. Only write what's actually asked for. Every
             notes: ""
           }));
         }
+        // Auto-save discovered/overridden fields to the library for reuse on future generations
+        if (parsed.formFieldsFound && Array.isArray(parsed.formFieldsFound) && parsed.formFieldsFound.length > 0) {
+          // If the user provided manual fields, mark the library entry as verified.
+          // Otherwise mark as unverified — user should review and confirm.
+          const wasManualOverride = !!(manualFields && manualFields.length > 0);
+          saveFieldsToLibrary(o.name, o.organization, parsed.formFieldsFound, wasManualOverride);
+        }
         const newApp = {
           id: Date.now().toString(),
           oppName: o.name,
@@ -1542,13 +1617,24 @@ No generic language. No boilerplate. Only write what's actually asked for. Every
   // Background: Refresh an existing application with updated analysis
   // mode: "augment" preserves user edits, only updates sections that benefit from new intelligence
   // mode: "regenerate" creates a completely fresh draft replacing the existing content
-  const runRefreshApp = async (appId, mode) => {
+  // manualFields (optional): array of { fieldName, wordLimit } to override field discovery.
+  //   If not provided, the library is checked; if a library entry exists, its fields are used.
+  const runRefreshApp = async (appId, mode, manualFields) => {
     const app = appsRef.current.find(a => a.id === appId);
     if (!app || app.status === "submitted") return;
 
     const allProjects = projectsRef.current;
     const p = allProjects.find(x => x.title === app.projTitle) || allProjects[0];
     if (!p) return;
+
+    // If no manual override passed, check if this opp has a saved library entry
+    let effectiveFields = manualFields;
+    if (!effectiveFields || effectiveFields.length === 0) {
+      const libEntry = getFieldsFromLibrary(app.oppName, app.oppOrg);
+      if (libEntry && libEntry.fields && libEntry.fields.length > 0) {
+        effectiveFields = libEntry.fields;
+      }
+    }
 
     const jobId = "refresh-" + appId + "-" + Date.now();
     addJob({
@@ -1616,6 +1702,19 @@ PROJECT
 • Team Notes: ${p.teamNotes || "?"}${analysisContext}
 
 ${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review carefully and reference specific scenes, visuals, characters, or moments from them — not vague summaries." : ""}
+
+${(effectiveFields && effectiveFields.length > 0) ? `
+🟢🟢🟢 MANUAL FIELD OVERRIDE — AUTHORITATIVE 🟢🟢🟢
+
+The user has provided the exact form field list for this opportunity (either manually or from a saved library entry). You do NOT need to search for or discover the field list. Use these fields VERBATIM as the \`formFieldsFound\` array. Do not rename them. Do not add to them. Do not drop any of them. Every field below MUST have corresponding content in your output.
+
+PROVIDED FIELDS:
+${effectiveFields.map((f, i) => `${i + 1}. "${f.fieldName}" — word limit: ${f.wordLimit || "unspecified"}`).join("\n")}
+
+You must still research the opportunity's tone, past recipients, selection criteria, aesthetic preferences, and org mission — the manual override applies ONLY to the field list. Research everything else normally.
+
+Populate \`formFieldsFound\` with one entry per provided field. For each, set \`sourceUrl\` to "user-provided" and \`mappedTo\` based on whether the field matches a standard key (coverLetter/projectStatement/artistStatement/budgetJustification/impactStatement/timeline) or should go to customSections. When in doubt, use customSections.
+` : ""}
 
 STEP 1 — RESEARCH (REQUIRED): Use web search to research "${app.oppName}" at "${app.oppOrg}". Find mission, past recipients, aesthetic preferences, tone, and selection criteria.
 
@@ -2178,6 +2277,11 @@ Respond ONLY with JSON (no markdown):
             runGenerate={runGenerate}
             dismissJob={dismissJob}
             runRefreshApp={runRefreshApp}
+            fieldLibrary={fieldLibrary}
+            getFieldsFromLibrary={getFieldsFromLibrary}
+            saveFieldsToLibrary={saveFieldsToLibrary}
+            deleteFieldLibraryEntry={deleteFieldLibraryEntry}
+            updateFieldLibraryNotes={updateFieldLibraryNotes}
           />
         )}
         {tab === "pay" && (
@@ -4083,7 +4187,7 @@ function DeadView({ deadlines, opps, save, go }) {
    APPLICATIONS
    ═══════════════════════════════════════════════════ */
 
-function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate, dismissJob, runRefreshApp }) {
+function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate, dismissJob, runRefreshApp, fieldLibrary, getFieldsFromLibrary, saveFieldsToLibrary, deleteFieldLibraryEntry, updateFieldLibraryNotes }) {
   const [selO, setSelO] = useState(null);
   const [selP, setSelP] = useState(0);
   const [view, setView] = useState(null);
@@ -4124,7 +4228,42 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
       .filter(f => f.fieldName);
   };
 
-  // Reset opportunity selection when project changes (available list shifts)
+  // Serialize saved library fields back into textarea format for the manual override UI
+  const serializeFields = (fields) => {
+    if (!Array.isArray(fields)) return "";
+    return fields
+      .map(f => (f.wordLimit && f.wordLimit !== "unspecified")
+        ? `${f.fieldName} | ${f.wordLimit}`
+        : f.fieldName)
+      .join("\n");
+  };
+
+  // Look up the saved library entry for the currently selected opportunity
+  const selectedOpp = selO !== null ? opps[selO] : null;
+  const libraryEntry = selectedOpp
+    ? getFieldsFromLibrary(selectedOpp.name, selectedOpp.organization)
+    : null;
+
+  // When selected opp changes, reset the override textarea. If the new opp has a
+  // saved library entry, auto-populate from it. If not, leave empty.
+  useEffect(() => {
+    if (selO === null) {
+      setManualText("");
+      setManualOpen(false);
+      return;
+    }
+    if (libraryEntry && libraryEntry.fields && libraryEntry.fields.length > 0) {
+      setManualText(serializeFields(libraryEntry.fields));
+      setManualOpen(true); // expand so the user can see what was loaded
+    } else {
+      setManualText("");
+      setManualOpen(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selO]);
+
+  // Reset opportunity selection when project changes (available list shifts).
+  // The selO-change effect handles clearing manualText/manualOpen.
   useEffect(() => {
     setSelO(null);
   }, [selP]);
@@ -4167,13 +4306,15 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
 
   const generate = () => {
     if (selO === null || !projects[selP]) return;
-    const manualFields = manualOpen ? parseManualFields(manualText) : [];
+    const parsed = parseManualFields(manualText);
+    // Use manual fields if the override is open AND there's valid content,
+    // OR if there are fields regardless (library auto-populated even if closed).
+    const manualFields = parsed.length > 0 ? parsed : [];
     runGenerate(selO, selP, manualFields.length > 0 ? manualFields : undefined);
-    // Collapse the override after firing so it doesn't silently apply to the next generation
-    if (manualFields.length > 0) {
-      setManualOpen(false);
-      setManualText("");
-    }
+    // After firing, reset the selection so selO-triggered useEffect can re-populate
+    // from library for the next opp. Don't clear manualText manually — the selO reset
+    // in another useEffect handles that.
+    setManualOpen(false);
   };
 
   const setCheck = (idx, key, val) => {
@@ -4695,6 +4836,65 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                     </div>
                   ))}
                 </div>
+                {/* Library status + controls for this application's field list */}
+                {(() => {
+                  const lib = getFieldsFromLibrary(app.oppName, app.oppOrg);
+                  return (
+                    <div style={{
+                      marginTop: "10px",
+                      padding: "8px 10px",
+                      background: (lib && lib.verified ? C.ac : C.bd) + "10",
+                      border: "1px solid " + (lib && lib.verified ? C.ac : C.bd) + "30",
+                      borderRadius: "4px",
+                      fontSize: "11px",
+                      fontFamily: FN.m,
+                      color: C.tm
+                    }}>
+                      {lib && lib.verified && (
+                        <span>✓ Field list saved to library (verified) · used automatically on future {app.oppName} applications</span>
+                      )}
+                      {lib && !lib.verified && (
+                        <div>
+                          <span style={{ display: "block", marginBottom: "6px" }}>⚠ Field list saved to library but unverified — AI discovered these, you should verify against the actual form</span>
+                          <Btn
+                            variant="secondary"
+                            small
+                            onClick={() => {
+                              saveFieldsToLibrary(app.oppName, app.oppOrg, c.formFieldsFound, true);
+                            }}
+                          >
+                            ✓ Mark as verified
+                          </Btn>
+                        </div>
+                      )}
+                      {!lib && (
+                        <div>
+                          <span style={{ display: "block", marginBottom: "6px" }}>Not saved to library. Save these fields to reuse them on future {app.oppName} applications.</span>
+                          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                            <Btn
+                              variant="secondary"
+                              small
+                              onClick={() => {
+                                saveFieldsToLibrary(app.oppName, app.oppOrg, c.formFieldsFound, true);
+                              }}
+                            >
+                              💾 Save as verified
+                            </Btn>
+                            <Btn
+                              variant="ghost"
+                              small
+                              onClick={() => {
+                                saveFieldsToLibrary(app.oppName, app.oppOrg, c.formFieldsFound, false);
+                              }}
+                            >
+                              Save (unverified)
+                            </Btn>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
             {sections.length > 0 && (
@@ -5737,11 +5937,47 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
             </select>
           </div>
         </div>
-        {/* Manual field override — collapsed by default, for when the user has the form field list in hand */}
+        {/* Manual field override + Library integration */}
         {(() => {
           const parsed = parseManualFields(manualText);
+          const hasLibrary = !!libraryEntry;
+          const libraryCount = hasLibrary ? libraryEntry.fields.length : 0;
+          const libraryVerified = hasLibrary && libraryEntry.verified;
+          // Detect when textarea has been edited away from what's in the library
+          const librarySerialized = hasLibrary ? serializeFields(libraryEntry.fields) : "";
+          const hasUnsavedEdits = hasLibrary && manualText.trim() !== "" && manualText !== librarySerialized;
           return (
             <div style={{ marginBottom: "14px" }}>
+              {/* Library status banner shown when an opp with a saved field list is selected */}
+              {hasLibrary && (
+                <div style={{
+                  marginBottom: "10px",
+                  padding: "8px 10px",
+                  background: (hasUnsavedEdits ? C.wn : (libraryVerified ? C.ac : C.wn)) + "15",
+                  border: "1px solid " + (hasUnsavedEdits ? C.wn : (libraryVerified ? C.ac : C.wn)) + "40",
+                  borderRadius: "4px",
+                  fontSize: "12px",
+                  fontFamily: FN.m,
+                  color: C.tx
+                }}>
+                  {hasUnsavedEdits ? (
+                    <>
+                      ✎ Field list edited — differs from library.
+                      <span style={{ color: C.tm, marginLeft: "6px" }}>Save below to update the saved version.</span>
+                    </>
+                  ) : (
+                    <>
+                      {libraryVerified ? "✓" : "⚠"} {libraryCount} saved field{libraryCount === 1 ? "" : "s"} loaded from library
+                      {libraryVerified
+                        ? " — verified, will be used automatically"
+                        : " — unverified (discovered by AI), review before generating"}
+                      <span style={{ marginLeft: "8px", color: C.tm, fontSize: "11px" }}>
+                        saved {new Date(libraryEntry.savedAt).toLocaleDateString()}
+                      </span>
+                    </>
+                  )}
+                </div>
+              )}
               <button
                 onClick={() => setManualOpen(!manualOpen)}
                 style={{
@@ -5759,8 +5995,8 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                 type="button"
               >
                 <span style={{ fontSize: "10px" }}>{manualOpen ? "▼" : "▶"}</span>
-                I have the field list (optional — skips field-discovery research)
-                {!manualOpen && parsed.length > 0 && (
+                {hasLibrary ? "Review or edit the field list" : "I have the field list (optional — skips field-discovery research)"}
+                {!manualOpen && parsed.length > 0 && !hasLibrary && (
                   <span style={{ color: C.ac, marginLeft: "4px" }}>· {parsed.length} field{parsed.length === 1 ? "" : "s"} ready</span>
                 )}
               </button>
@@ -5808,6 +6044,35 @@ Artistic Statement | 500 words`}</pre>
                     <p style={{ fontSize: "11px", color: C.wn, marginTop: "6px" }}>
                       ⚠ No valid fields parsed. Check the format — one field per line.
                     </p>
+                  )}
+                  {/* Save / verify controls when text is present and matches a selected opp */}
+                  {selectedOpp && parsed.length > 0 && (
+                    <div style={{ marginTop: "10px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                      <Btn
+                        variant="secondary"
+                        small
+                        onClick={() => {
+                          saveFieldsToLibrary(selectedOpp.name, selectedOpp.organization, parsed, true);
+                        }}
+                      >
+                        {hasLibrary ? "💾 Update library (verified)" : "💾 Save to library (verified)"}
+                      </Btn>
+                      {hasLibrary && (
+                        <Btn
+                          variant="ghost"
+                          small
+                          onClick={() => {
+                            if (confirm("Remove " + selectedOpp.name + " from the field library?")) {
+                              deleteFieldLibraryEntry(selectedOpp.name, selectedOpp.organization);
+                              setManualText("");
+                              setManualOpen(false);
+                            }
+                          }}
+                        >
+                          🗑 Remove from library
+                        </Btn>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
