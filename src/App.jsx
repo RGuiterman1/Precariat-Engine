@@ -417,47 +417,7 @@ async function askClaude(content, search, attempt = 0) {
   return text;
 }
 
-// Strip citation markup and HTML tags from AI output that was rendered as text.
-// Walks the parsed JSON structure and cleans every string value in place.
-// This is belt-and-suspenders defense — prompts already tell the AI not to emit
-// cite tags, but model behavior can vary so we sanitize on ingest.
-function sanitizeStrings(obj) {
-  if (obj === null || obj === undefined) return obj;
-  if (typeof obj === "string") {
-    return obj
-      // Strip cite tags with any attributes: <cite>, <cite index="1">, </cite>
-      .replace(/<\/?cite[^>]*>/gi, "")
-      // Strip antml citation wrappers: , , etc
-      .replace(/<\/?antml:[^>]*>/gi, "")
-      // Strip generic HTML/XML-ish tags that the AI sometimes adds (be conservative
-      // — only strip tags we know are decorative, not things like <3 or math)
-      .replace(/<\/?(b|i|em|strong|u|span|a|sup|sub|mark|small|div|p|br)(\s[^>]*)?>/gi, "")
-      // Strip footnote markers like [1], [^2], [23] when they appear as citations
-      // (only at word boundaries, only with digits inside)
-      .replace(/\[\^?\d+\]/g, "")
-      // Collapse multiple spaces left behind by tag stripping
-      .replace(/[ \t]+/g, " ")
-      // Fix space before punctuation left by stripped tags
-      .replace(/ ([,.;:!?])/g, "$1")
-      .trim();
-  }
-  if (Array.isArray(obj)) return obj.map(sanitizeStrings);
-  if (typeof obj === "object") {
-    const out = {};
-    for (const [k, v] of Object.entries(obj)) {
-      out[k] = sanitizeStrings(v);
-    }
-    return out;
-  }
-  return obj;
-}
-
 function extractJSON(text) {
-  const result = extractJSONRaw(text);
-  return result === null ? null : sanitizeStrings(result);
-}
-
-function extractJSONRaw(text) {
   // Strip markdown fences
   let clean = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
 
@@ -1019,16 +979,6 @@ Extract names from:
 ═══════════════════════════════════════════════════════════
 OUTPUT FORMAT (JSON only, no markdown, no backticks)
 ═══════════════════════════════════════════════════════════
-🚨 CRITICAL FORMATTING RULE: Your response must be PLAIN TEXT inside JSON string values. Do NOT include ANY of the following in your output:
-• No <cite> tags or citation markup of any kind
-• No  or similar XML/HTML citation wrappers
-• No footnote-style markers like [1], [2], [^1], or superscripts
-• No HTML tags of any kind (<b>, <em>, <a>, <span>, etc.)
-• No markdown syntax (**, __, [text](url), etc.)
-• No source attributions like "(Source: ...)" embedded in the text
-
-Web search is a RESEARCH TOOL for you to gather facts. Once you have the facts, write them as clean prose in the JSON values. If you want to convey where info came from, mention the source in natural language within the research field itself (e.g., "According to IMDb, she produced..." or "Per Variety's 2024 coverage, the film..."). But NO markup, NO tags, NO citation wrappers. The JSON values are displayed directly in a UI and any markup will render as ugly raw text.
-
 {
   "team": {
     "members": [
@@ -1216,11 +1166,7 @@ This project is currently in "${p.stage}" stage. ${stageRule}
 
 Before returning ANY opportunity, verify it explicitly accepts projects in "${p.stage}" stage. If an opportunity requires a different stage, EXCLUDE IT. It is better to return fewer results than to include mismatched opportunities.
 
-Respond ONLY with a JSON array.
-
-🚨 CRITICAL FORMATTING RULE: All string values in the JSON must be PLAIN TEXT. Do NOT include <cite> tags,  wrappers, footnote markers [1][2], HTML tags, markdown, or any other markup. Web search is for research — the output must be clean prose.
-
-Each object must have:
+Respond ONLY with a JSON array. Each object must have:
 - "name", "organization"
 - "type" ("Grant"|"Festival"|"Lab"|"Fellowship"|"Residency")
 - "deadline" (specific date like "June 15, 2026" when available)
@@ -1267,7 +1213,8 @@ Find 6-12 real opportunities that STRICTLY match the project's current stage. Qu
   };
 
   // Background: Generate an application
-  const runGenerate = async (oppIdx, projectIdx) => {
+  // manualFields (optional): array of { fieldName, wordLimit } if user pre-specified the field list
+  const runGenerate = async (oppIdx, projectIdx, manualFields) => {
     const o = oppsRef.current[oppIdx];
     const p = projectsRef.current[projectIdx];
     if (!o || !p) return;
@@ -1339,6 +1286,19 @@ PROJECT
 
 ${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review the attached files (screenplay, pitch deck, look book, etc.) carefully. Reference SPECIFIC scenes, visuals, characters, or moments from them — not vague summaries. This specificity is what separates winning applications from generic ones." : ""}
 
+${(manualFields && manualFields.length > 0) ? `
+🟢🟢🟢 MANUAL FIELD OVERRIDE — AUTHORITATIVE 🟢🟢🟢
+
+The user has provided the exact form field list for this opportunity. You do NOT need to search for or discover the field list — it is given below. Use these fields VERBATIM as the \`formFieldsFound\` array. Do not rename them. Do not add to them. Do not drop any of them. Every field below MUST have corresponding content in your output.
+
+PROVIDED FIELDS:
+${manualFields.map((f, i) => `${i + 1}. "${f.fieldName}" — word limit: ${f.wordLimit || "unspecified"}`).join("\n")}
+
+You must still research the opportunity's tone, past recipients, selection criteria, aesthetic preferences, and org mission — the manual override applies ONLY to the field list. Research everything else normally.
+
+Populate \`formFieldsFound\` with one entry per provided field. For each, set \`sourceUrl\` to "user-provided" and \`mappedTo\` based on whether the field matches a standard key (coverLetter/projectStatement/artistStatement/budgetJustification/impactStatement/timeline) or should go to customSections. When in doubt, use customSections.
+` : ""}
+
 ═══════════════════════════════════════════════════════════
 STEP 1 — RESEARCH THE OPPORTUNITY (REQUIRED, NON-NEGOTIABLE)
 ═══════════════════════════════════════════════════════════
@@ -1351,17 +1311,33 @@ Before writing a single word of the application, you MUST use web search to rese
 5. Any specific framings, buzzwords, or priorities that recur in their materials
 6. Selection criteria — what do judges/committees explicitly score on?
 7. Any red flags or common reasons applications fail
-8. **THE EXACT APPLICATION REQUIREMENTS** — CRITICAL. This is the most common failure point: applications get submitted with missing fields because the research was incomplete. You MUST follow all four sub-steps below. Skipping any of them is a failure.
 
-   **8a. FETCH THE ACTUAL SUBMISSION PAGE.** Do not rely on search snippets, press articles, or descriptions of the program. Use web search to find the direct URL where applicants actually submit — typically a page like "${o.organization} [program name] apply" or "${o.organization} submission guidelines" — and read the full page. If the submission portal requires login and you cannot see the field list directly, find any FAQ, guidelines PDF, or alumni writeup that enumerates what the application asks for.
+🔴🔴🔴 STEP 1B — THE FORM FIELD LIST (MOST CRITICAL PART OF STEP 1) 🔴🔴🔴
 
-   **8b. ENUMERATE EVERY FIELD THE APPLICATION ASKS FOR.** List each field by its exact name as the application calls it. Include word/character limits where stated. Do not paraphrase — capture the actual labels. Common fields to watch for that are EASILY MISSED: logline, short synopsis, long synopsis, personal statement, director's statement, artist statement, bios (director, producer, key team), comparable films, target audience, distribution plan, budget range, budget narrative/justification, mood board or visual reference upload, screenplay PDF upload, budget top sheet upload, W9 or tax forms, fiscal sponsor documentation, work samples or past film links.
+You MUST find the actual list of form fields this application asks for. Not a summary. Not a vibe. The literal list of fields the applicant will see when they open the submission form.
 
-   **8c. MAP EACH FIELD TO AN OUTPUT KEY.** For every field enumerated in 8b, decide: does it map to one of the standard keys (coverLetter, projectStatement, artistStatement, directorsStatement, personalStatement, logline, shortSynopsis, longSynopsis, budgetJustification, impactStatement, timeline, comparableFilms, targetAudience, distributionStrategy, bios)? If yes, add that key to standardSectionsNeeded. If it does not map cleanly to a standard key, create a customSection entry using the application's exact field name as the title. Do NOT drop a field on the floor because it does not fit a standard key — use customSections.
+Find it by searching for:
+- "[Opportunity name] application guidelines"
+- "[Opportunity name] FAQ"
+- "[Opportunity name] how to apply"
+- "[Opportunity name] submission requirements"
+- Links to the application form itself (Submittable, FilmFreeway, Gotham's own portal, etc.)
+- Past-year applications screenshots or guidebooks shared by alumni
+- Info session recordings or transcripts
 
-   **8d. COMPLETENESS CHECK.** Before finalizing, ask yourself explicitly: "For a [program type] of this prestige level, what other fields would I typically expect to see? Do I have them all accounted for?" If Gotham-level project markets typically ask for logline + synopsis + personal statement + bios + budget + screenplay, and I only have "cover letter" on my list, something is wrong — search again. Err on the side of over-including rather than under-including: if you're unsure whether something is required, include it and note in requirements.additionalInstructions that the user should verify before submitting.
+Every field you find must be captured with its EXACT NAME AS THE FORM USES IT and the EXACT WORD/CHARACTER LIMIT. If the form calls it "Artistic Statement" do NOT rename it to "Artist Statement." If the limit is "500 words" use "500 words," not "about half a page."
 
-   **8e. ACCOUNT / MEMBERSHIP PREREQUISITES.** Does this opportunity require the applicant to have an account or active membership with a specific platform? Common examples: Blacklist hosted evaluation, Sundance Institute account, Film Independent membership, Gotham Film & Media Institute membership, FilmFreeway account, Coverfly profile, IMDb Pro listing, WGA registration, Stage 32 membership, Tracking Board, fiscal sponsor affiliation, 501(c)(3) status. Check the applicant's connected accounts list (provided in context) and flag which are met vs. which the applicant needs to create.
+If you CANNOT find the actual field list after diligent searching (and there is no manual override above):
+- Do NOT hallucinate one. Do NOT fall back to a generic template.
+- Return an empty \`formFieldsFound\` array and explicitly note this in the \`requirements.summary\` field: "Field list could not be confirmed through public research. This draft uses a generic template; the user must verify the actual form requirements before submitting."
+- Still flag any external materials and account prerequisites you can identify.
+
+🔴 COMMON FAILURE MODE TO AVOID: Some applications (Gotham Week, Sundance labs, many fellowships) have detailed field lists that live INSIDE a login-gated Submittable or custom portal. The marketing page only shows vague descriptions. If you land on a marketing page that says "submit your project" without field details, KEEP SEARCHING — look for guidelines PDFs, FAQ pages, alumni posts, third-party coverage. Do not settle for the marketing page.
+
+Additional research items beyond field discovery:
+
+- **External materials the user must provide themselves** (artwork, production stills, trailer/sizzle reel, pitch video, letters of recommendation, W9s, budget spreadsheets, work samples, IMDb links, etc.)
+- **Account / membership prerequisites** — does this opportunity require the applicant to have an account or active membership with a specific platform? Common examples: Blacklist hosted evaluation, Sundance Institute account, Film Independent membership, FilmFreeway account, Coverfly profile, IMDb Pro listing, WGA registration, Stage 32 membership, Tracking Board, fiscal sponsor affiliation, 501(c)(3) status. Check the applicant's connected accounts list (provided in context) and flag which are met vs. which the applicant needs to create.
 
 Search broadly. Read multiple pages. Do NOT skip this step.
 
@@ -1370,13 +1346,15 @@ STEP 2 — WRITE THE APPLICATION
 ═══════════════════════════════════════════════════════════
 Armed with your research, write each section with these mandates:
 
-▸ **ONLY GENERATE WHAT'S ACTUALLY REQUIRED**: Do NOT write generic boilerplate sections if this opportunity doesn't ask for them. If the opportunity only requires a cover letter and a project statement, DON'T write an artist statement, impact statement, timeline, and budget justification just to fill out a template. Match the application to exactly what's asked for.
+▸ **GENERATE CONTENT FOR EVERY FIELD IN formFieldsFound — NO EXCEPTIONS**: The fields you identified in Step 1B are the ground truth of this application. You must produce content for every single one. If \`formFieldsFound\` contains 8 entries, your output must contain 8 pieces of content (distributed across the standard keys and \`customSections\` based on which keys match). If you skip a field, the applicant cannot submit. Before finalizing your response, count your output fields against \`formFieldsFound\` and confirm they match. Do NOT generate boilerplate for generic sections the opportunity did NOT ask for.
 
 ▸ **TONE MATCHING**: The voice must match how this specific organization communicates. If they're academic and critical, be academic and critical. If they're activist and urgent, be activist and urgent. If they're literary and meditative, be literary and meditative. If they're industry-insider and commercial, be industry-insider and commercial. Match their register exactly.
 
 ▸ **LANGUAGE MIRRORING**: Echo the specific vocabulary and framings the organization uses. If they say "underrepresented voices," use that framing. If they emphasize "craft" or "vision" or "formal innovation" — make those words present.
 
-▸ **RESPECT WORD LIMITS**: If the application specifies word or character limits, adhere to them strictly. A section that runs long gets cut by committees. Write tightly to the specified length.
+▸ **RESPECT WORD LIMITS STRICTLY**: Every field in \`formFieldsFound\` has a \`wordLimit\`. You must respect it. For a "25 words max" field, write 20-25 words, never 30. For a "60 words" field, write 55-60. For a "500 words" field, 460-500. Before finalizing each piece of content, COUNT the words and verify it fits. Committees cut long answers without reading them; short answers read as underdeveloped. Hit the target band.
+
+▸ **PRESERVE EXACT FIELD NAMES**: When you identify a field as "Accountability Statement" or "Artistic Statement" or "Director's Vision," use that EXACT name as the \`title\` in \`customSections\` (or match it to the standard key if one applies). Do NOT rename fields to what you think they should be called. The applicant will paste your output into a form with those exact field names; if your titles don't match, they can't use your output.
 
 ▸ **EMPHASIS CALIBRATION**: Different opportunities care about different things. A commercial market lab cares about distribution angles and audience — lead with that. A formally adventurous grant cares about aesthetic risk and artistic lineage — lead with that. A social impact fund cares about community, access, and representation — lead with that. CHOOSE what to emphasize based on your research, not a template.
 
@@ -1408,15 +1386,8 @@ Armed with your research, write each section with these mandates:
 ═══════════════════════════════════════════════════════════
 OUTPUT FORMAT (JSON only, no markdown, no backticks)
 ═══════════════════════════════════════════════════════════
-🚨 CRITICAL FORMATTING RULE: Your response must be PLAIN TEXT inside JSON string values. Do NOT include ANY of the following in your output:
-• No <cite> tags or citation markup of any kind
-• No  or similar XML/HTML citation wrappers
-• No footnote-style markers like [1], [2], [^1], or superscripts
-• No HTML tags of any kind (<b>, <em>, <a>, <span>, etc.)
-• No markdown syntax (**, __, [text](url), etc.)
-• No source attributions like "(Source: ...)" embedded in the text
 
-Web search is a RESEARCH TOOL for you to gather facts. Once you have the facts, write them as clean prose in the JSON values. If you want to convey where info came from, mention the source in natural language within the research field itself (e.g., "According to IMDb, she produced..." or "Per Variety's 2024 coverage, the film..."). But NO markup, NO tags, NO citation wrappers. The JSON values are displayed directly in a UI and any markup will render as ugly raw text.
+The structure below makes \`formFieldsFound\` + \`customSections\` the PRIMARY output. The legacy standard keys (\`coverLetter\`, \`projectStatement\`, etc.) are CONVENIENCE ALIASES — use them only when the opportunity actually asks for a section with that exact meaning. For anything that doesn't map cleanly, use \`customSections\` with the form's actual field name. When in doubt, use \`customSections\`. Do NOT force-fit unusual fields into the standard keys.
 
 {
   "research": {
@@ -1426,34 +1397,34 @@ Web search is a RESEARCH TOOL for you to gather facts. Once you have the facts, 
     "keyCriteria": "The top 3-5 things their selection committee likely weighs most heavily, as a bullet list",
     "strategicInsight": "The single most important insight that shaped how this application was written"
   },
+  "formFieldsFound": [
+    {
+      "fieldName": "Exact name as the application form uses it, e.g. 'Accountability Statement' or 'Logline'",
+      "wordLimit": "Exact limit as stated, e.g. '25 words' or '500 words' or '1500 characters' or 'unspecified'",
+      "description": "1-sentence description of what the field asks for, derived from the application's own language",
+      "sourceUrl": "The URL where you found this field's requirements (NOT the opportunity's homepage — the guidelines/FAQ/application page where the field is listed)",
+      "mappedTo": "Either a standard key ('coverLetter', 'projectStatement', 'artistStatement', 'budgetJustification', 'impactStatement', 'timeline') OR 'customSections'. If ambiguous, default to customSections."
+    }
+  ],
   "requirements": {
-    "summary": "2-3 sentences describing exactly what this application asks for — reflect what you found in your research about their actual submission form/guidelines",
-    "standardSectionsNeeded": "Array of which STANDARD section keys are actually required by this opportunity. Only include the ones they ask for. Possible keys: coverLetter, projectStatement, artistStatement, directorsStatement, personalStatement, logline, shortSynopsis, longSynopsis, budgetJustification, impactStatement, timeline, comparableFilms, targetAudience, distributionStrategy, bios. Example: ['coverLetter', 'projectStatement', 'budgetJustification'] if they only want those three. If the application asks for something that does not map cleanly to these keys, use customSections for it instead — but do NOT leave a required field off the list. Return empty array ONLY if you genuinely cannot determine any requirements.",
-    "wordLimits": "Object mapping section keys to word/character limits. E.g., { 'projectStatement': '500 words', 'artistStatement': '300 words' }. Only include keys that have explicit limits.",
-    "additionalInstructions": "Any special formatting or content instructions per section"
+    "summary": "2-3 sentences describing exactly what this application asks for, based on formFieldsFound. If field discovery failed, say so explicitly here.",
+    "standardSectionsNeeded": "Array of standard keys ('coverLetter', 'projectStatement', 'artistStatement', 'budgetJustification', 'impactStatement', 'timeline') that have an exact match in formFieldsFound. Include ONLY keys that appear in at least one formFieldsFound entry's mappedTo value. Return empty array if no standard keys match.",
+    "wordLimits": "Object mapping standard section keys to word/character limits, e.g. { 'projectStatement': '500 words' }. Only include keys that both (a) are in standardSectionsNeeded and (b) have explicit limits in formFieldsFound.",
+    "additionalInstructions": "Any special formatting or content instructions from the application guidelines"
   },
   "toneStrategy": "2-3 sentences explaining the voice/register/emphasis chosen for this application and WHY it matches this specific opportunity",
-  "coverLetter": "Only generate if coverLetter is in standardSectionsNeeded. Otherwise return empty string.",
-  "projectStatement": "Only generate if projectStatement is in standardSectionsNeeded. Otherwise return empty string.",
-  "artistStatement": "Only generate if artistStatement is in standardSectionsNeeded. Otherwise return empty string.",
-  "directorsStatement": "Only generate if directorsStatement is in standardSectionsNeeded. Otherwise return empty string. Director(s) speaking about their vision for the film — typically 500-1000 words, first-person or first-person-plural if co-directed.",
-  "personalStatement": "Only generate if personalStatement is in standardSectionsNeeded. Otherwise return empty string. Personal reflection on why this filmmaker is making this film now — typically 500-700 words.",
-  "logline": "Only generate if logline is in standardSectionsNeeded. Otherwise return empty string. One sentence, under 50 words.",
-  "shortSynopsis": "Only generate if shortSynopsis is in standardSectionsNeeded. Otherwise return empty string. Typically 100-200 words.",
-  "longSynopsis": "Only generate if longSynopsis is in standardSectionsNeeded. Otherwise return empty string. Typically 400-800 words, full plot including ending.",
-  "budgetJustification": "Only generate if budgetJustification is in standardSectionsNeeded. Otherwise return empty string.",
-  "impactStatement": "Only generate if impactStatement is in standardSectionsNeeded. Otherwise return empty string.",
-  "timeline": "Only generate if timeline is in standardSectionsNeeded. Otherwise return empty string.",
-  "comparableFilms": "Only generate if comparableFilms is in standardSectionsNeeded. Otherwise return empty string. 3-5 specific films with years, distributors, box office or awards where available, and 1 sentence each on why they are relevant comparables.",
-  "targetAudience": "Only generate if targetAudience is in standardSectionsNeeded. Otherwise return empty string. Specific description of who the film is for.",
-  "distributionStrategy": "Only generate if distributionStrategy is in standardSectionsNeeded. Otherwise return empty string. Festival plan, distributor targets, market positioning.",
-  "bios": "Only generate if bios is in standardSectionsNeeded. Otherwise return empty string. Third-person biographies of key creative team, each 75-150 words. Format as 'NAME — ROLE\n\nBio text.' separated by double newlines.",
+  "coverLetter": "Generate only if 'coverLetter' is in standardSectionsNeeded. Otherwise empty string.",
+  "projectStatement": "Generate only if 'projectStatement' is in standardSectionsNeeded. Otherwise empty string.",
+  "artistStatement": "Generate only if 'artistStatement' is in standardSectionsNeeded. Otherwise empty string.",
+  "budgetJustification": "Generate only if 'budgetJustification' is in standardSectionsNeeded. Otherwise empty string.",
+  "impactStatement": "Generate only if 'impactStatement' is in standardSectionsNeeded. Otherwise empty string.",
+  "timeline": "Generate only if 'timeline' is in standardSectionsNeeded. Otherwise empty string.",
   "customSections": [
     {
-      "key": "camelCaseKey (unique identifier, e.g. 'communityEngagement')",
-      "title": "Human-readable section title as the application form calls it, e.g. 'Community Engagement Plan'",
-      "wordLimit": "500 words (or whatever the app specifies, or 'unspecified')",
-      "content": "The fully written section, tailored to this opportunity"
+      "key": "camelCaseKey (unique identifier derived from fieldName, e.g. 'accountabilityStatement')",
+      "title": "The EXACT field name as the application form uses it — do not rephrase or 'clean it up'",
+      "wordLimit": "Exact limit as stated in formFieldsFound, e.g. '500 words' or 'unspecified'",
+      "content": "The fully written field content, tailored to this opportunity, respecting the word limit strictly"
     }
   ],
   "externalMaterials": [
@@ -1475,6 +1446,20 @@ Web search is a RESEARCH TOOL for you to gather facts. Once you have the facts, 
   ],
   "strategicNotes": "INTERNAL ONLY — not for the application itself. Write 3-5 bullet points for the applicant (Ryan) explaining: what angle you chose and why, what you deliberately emphasized or downplayed, any risks or weak spots in the application, and suggestions for what to personalize or supplement before submitting. Include a reminder to gather the external materials listed above."
 }
+
+═══════════════════════════════════════════════════════════
+FINAL SELF-CHECK BEFORE RETURNING RESPONSE
+═══════════════════════════════════════════════════════════
+
+Before returning the JSON, verify:
+
+1. Every entry in \`formFieldsFound\` has a corresponding piece of content somewhere in the output — either in a standard key (if mappedTo is a standard key AND that key is in standardSectionsNeeded) OR in \`customSections\` (if mappedTo is 'customSections'). Count the fields. Count the content pieces. They must match.
+
+2. Every piece of content respects its word limit. Count the words. If over, trim. If far under, expand to the band.
+
+3. Every \`customSections\` entry uses the EXACT field name from the form (not a paraphrase).
+
+4. If \`formFieldsFound\` is empty (discovery failed), the \`requirements.summary\` explicitly says so and you have not hallucinated a generic set of sections.
 
 No generic language. No boilerplate. Only write what's actually asked for. Every word must earn its place. Make this application so specific that it could not have been written for any other opportunity.`;
 
@@ -1632,24 +1617,13 @@ PROJECT
 
 ${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review carefully and reference specific scenes, visuals, characters, or moments from them — not vague summaries." : ""}
 
-STEP 1 — RESEARCH (REQUIRED): Use web search to research "${app.oppName}" at "${app.oppOrg}". Find their mission, past recipients, aesthetic preferences, tone, selection criteria, AND — critically — the EXACT application requirements.
+STEP 1 — RESEARCH (REQUIRED): Use web search to research "${app.oppName}" at "${app.oppOrg}". Find mission, past recipients, aesthetic preferences, tone, and selection criteria.
 
-**REQUIREMENTS EXTRACTION is the most common failure point.** You MUST:
-(a) Fetch the actual submission page — not just press snippets or descriptions.
-(b) Enumerate every field the application asks for, by exact name.
-(c) Map each field to a standard key OR create a customSection for it — do NOT drop fields on the floor.
-(d) Completeness check: for a program of this type and prestige, are there standard fields you might be missing? (Common easily-missed: logline, short synopsis, long synopsis, personal statement, director's statement, bios, comparable films, target audience, distribution plan, budget narrative, screenplay PDF upload.)
-(e) Err on the side of over-including — if unsure, include it and flag in additionalInstructions.
+🔴 STEP 1B — THE FORM FIELD LIST (CRITICAL): You must find the literal list of form fields this application asks for — the exact fields the applicant sees on the submission form. Capture each with its EXACT NAME and EXACT WORD/CHARACTER LIMIT. Search application guidelines, FAQ pages, Submittable/FilmFreeway listings, alumni screenshots, info session recordings. If you cannot find the actual field list, return an empty formFieldsFound array and note this in requirements.summary — do NOT hallucinate a generic template.
 
-Also identify external materials (artwork, letters of rec, pitch videos, etc.) the applicant must provide, and any account/membership prerequisites.
+STEP 2 — WRITE: Generate content for EVERY field in formFieldsFound — no exceptions. Count fields, count output pieces, confirm they match. Respect every word limit strictly (count words before finalizing). Preserve the exact field names in customSections titles. Do NOT write generic boilerplate sections the opportunity doesn't ask for.
 
-STEP 2 — WRITE: Only generate the sections this opportunity actually requires. Don't write generic boilerplate for sections not asked for. Every section must match the org's voice, respect any word limits, and answer "why THIS project for THIS opportunity."
-
-Respond ONLY with JSON (no markdown).
-
-🚨 CRITICAL FORMATTING RULE: All string values in the JSON must be PLAIN TEXT. Do NOT include <cite> tags,  wrappers, footnote markers [1][2], HTML tags (<b>, <em>, <a>, etc.), or markdown (**bold**, __italic__). Web search is for research — the output must be clean prose ready to appear in a UI. Written sections will be pasted directly into grant applications so ANY markup would be unacceptable.
-
-JSON schema:
+Respond ONLY with JSON (no markdown):
 {
   "research": {
     "orgMission": "1-2 sentences on what this org stands for",
@@ -1658,30 +1632,30 @@ JSON schema:
     "keyCriteria": "Top 3-5 things their committee weighs, as bullets",
     "strategicInsight": "The single most important insight shaping this application"
   },
+  "formFieldsFound": [
+    {
+      "fieldName": "Exact name as the form uses it",
+      "wordLimit": "Exact limit, e.g. '500 words' or 'unspecified'",
+      "description": "1-sentence description of what the field asks for",
+      "sourceUrl": "URL where this field was found (NOT the opportunity homepage)",
+      "mappedTo": "Standard key ('coverLetter','projectStatement','artistStatement','budgetJustification','impactStatement','timeline') or 'customSections'"
+    }
+  ],
   "requirements": {
-    "summary": "2-3 sentences describing exactly what this application asks for",
-    "standardSectionsNeeded": "Array of standard keys the opp actually requires. Possible keys: coverLetter, projectStatement, artistStatement, directorsStatement, personalStatement, logline, shortSynopsis, longSynopsis, budgetJustification, impactStatement, timeline, comparableFilms, targetAudience, distributionStrategy, bios. Include only the ones they ask for. Use customSections for any field that does not map to these keys.",
-    "wordLimits": "Object mapping section keys to limits, e.g. { 'projectStatement': '500 words' }",
+    "summary": "2-3 sentences describing exactly what this application asks for. If field discovery failed, say so explicitly.",
+    "standardSectionsNeeded": "Array of standard keys that appear in at least one formFieldsFound entry's mappedTo. Empty array if none.",
+    "wordLimits": "Object mapping standard section keys to limits (only keys in standardSectionsNeeded with explicit limits)",
     "additionalInstructions": "Any special formatting/content notes"
   },
   "toneStrategy": "2-3 sentences on the voice/emphasis chosen for this app and WHY",
   "coverLetter": "Only if in standardSectionsNeeded, else empty string",
   "projectStatement": "Only if in standardSectionsNeeded, else empty string",
   "artistStatement": "Only if in standardSectionsNeeded, else empty string",
-  "directorsStatement": "Only if in standardSectionsNeeded, else empty string",
-  "personalStatement": "Only if in standardSectionsNeeded, else empty string",
-  "logline": "Only if in standardSectionsNeeded, else empty string",
-  "shortSynopsis": "Only if in standardSectionsNeeded, else empty string",
-  "longSynopsis": "Only if in standardSectionsNeeded, else empty string",
   "budgetJustification": "Only if in standardSectionsNeeded, else empty string",
   "impactStatement": "Only if in standardSectionsNeeded, else empty string",
   "timeline": "Only if in standardSectionsNeeded, else empty string",
-  "comparableFilms": "Only if in standardSectionsNeeded, else empty string",
-  "targetAudience": "Only if in standardSectionsNeeded, else empty string",
-  "distributionStrategy": "Only if in standardSectionsNeeded, else empty string",
-  "bios": "Only if in standardSectionsNeeded, else empty string",
   "customSections": [
-    { "key": "camelCaseKey", "title": "Human Title", "wordLimit": "...", "content": "..." }
+    { "key": "camelCaseKey", "title": "EXACT field name from form", "wordLimit": "...", "content": "..." }
   ],
   "externalMaterials": [
     { "name": "...", "requirement": "...", "note": "...", "critical": true }
@@ -1690,7 +1664,9 @@ JSON schema:
     { "name": "Platform name", "reason": "Why needed", "url": "direct link", "alreadyMet": false, "matchedAccount": "" }
   ],
   "strategicNotes": "Internal bullet points: angle chosen, what was emphasized, risks, personalization suggestions, reminder to gather external materials."
-}`;
+}
+
+FINAL SELF-CHECK: Before returning, verify every formFieldsFound entry has corresponding content, every content piece respects its word limit, and every customSections title uses the exact form field name.`;
       } else {
         // Augment mode: surgical update preserving tone and user edits
         textPrompt = `You are a world-class grant writer reviewing an existing application draft against UPDATED project intelligence. The team has new information (new collaborator attached, updated budget, revised script, new credits, etc.). You must decide what — if anything — in the application should be updated.
@@ -1740,11 +1716,7 @@ CRITICAL AUGMENTATION RULES
 6. **PRESERVE REQUIREMENTS**: The existing draft has a 'requirements' field showing which sections this opportunity actually asks for, plus 'customSections' and 'externalMaterials'. Preserve these unless your re-research reveals the opportunity's requirements have changed. If they have changed, update them.
 7. **DO NOT add standard sections that aren't in requirements.standardSectionsNeeded**. Only update sections the opportunity actually asks for.
 
-Respond ONLY with JSON (no markdown).
-
-🚨 CRITICAL FORMATTING RULE: All string values in the JSON must be PLAIN TEXT. Do NOT include <cite> tags,  wrappers, footnote markers [1][2], HTML tags (<b>, <em>, <a>, etc.), or markdown (**bold**, __italic__). Web search is for research — the output must be clean prose ready to appear in a UI. Written sections will be pasted directly into grant applications so ANY markup would be unacceptable.
-
-JSON schema:
+Respond ONLY with JSON (no markdown):
 {
   "research": {
     "orgMission": "Updated understanding of the org's mission",
@@ -1753,6 +1725,7 @@ JSON schema:
     "keyCriteria": "Top 3-5 committee priorities",
     "strategicInsight": "Key insight that guided this refresh"
   },
+  "formFieldsFound": "Preserve existing formFieldsFound array from the draft unchanged, unless your re-research reveals the form's field list has materially changed. If changed, return the updated list with the same schema: { fieldName, wordLimit, description, sourceUrl, mappedTo }.",
   "requirements": {
     "summary": "Preserve from existing unless research reveals changes",
     "standardSectionsNeeded": "Preserve from existing unless research reveals changes",
@@ -1763,19 +1736,10 @@ JSON schema:
   "coverLetter": "Preserve or update — only if in standardSectionsNeeded",
   "projectStatement": "Preserve or update — only if in standardSectionsNeeded",
   "artistStatement": "Preserve or update — only if in standardSectionsNeeded",
-  "directorsStatement": "Preserve or update — only if in standardSectionsNeeded",
-  "personalStatement": "Preserve or update — only if in standardSectionsNeeded",
-  "logline": "Preserve or update — only if in standardSectionsNeeded",
-  "shortSynopsis": "Preserve or update — only if in standardSectionsNeeded",
-  "longSynopsis": "Preserve or update — only if in standardSectionsNeeded",
   "budgetJustification": "Preserve or update — only if in standardSectionsNeeded",
   "impactStatement": "Preserve or update — only if in standardSectionsNeeded",
   "timeline": "Preserve or update — only if in standardSectionsNeeded",
-  "comparableFilms": "Preserve or update — only if in standardSectionsNeeded",
-  "targetAudience": "Preserve or update — only if in standardSectionsNeeded",
-  "distributionStrategy": "Preserve or update — only if in standardSectionsNeeded",
-  "bios": "Preserve or update — only if in standardSectionsNeeded",
-  "customSections": "Preserve existing custom sections with updated content where needed",
+  "customSections": "Preserve existing custom sections with updated content where needed. Titles must remain exact matches to form field names.",
   "externalMaterials": "Preserve existing external materials list, updating only if requirements changed",
   "accountsRequired": "Preserve existing account requirements, updating only if your re-research reveals changes. Cross-reference against the connected accounts list provided.",
   "strategicNotes": "...",
@@ -1815,8 +1779,8 @@ JSON schema:
         const updatedApps = currentApps.map(a => {
           if (a.id !== appId) return a;
           const newContent = { ...a.content };
-          // Copy over any fields that came back, including research + toneStrategy
-          ["projectStatement", "artistStatement", "budgetJustification", "impactStatement", "timeline", "coverLetter", "strategicNotes", "research", "toneStrategy", "requirements", "customSections", "externalMaterials", "accountsRequired"].forEach(k => {
+          // Copy over any fields that came back, including research + toneStrategy + formFieldsFound
+          ["projectStatement", "artistStatement", "budgetJustification", "impactStatement", "timeline", "coverLetter", "strategicNotes", "research", "toneStrategy", "requirements", "formFieldsFound", "customSections", "externalMaterials", "accountsRequired"].forEach(k => {
             if (parsed[k]) newContent[k] = parsed[k];
           });
           return {
@@ -4133,6 +4097,32 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
   const [outcomeForm, setOutcomeForm] = useState({ outcome: "", notes: "", postMortem: "" });
   const [humanizingKey, setHumanizingKey] = useState(null);
   const [listFilter, setListFilter] = useState("all");
+  // Manual field override — for when user has the actual form field list in hand
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualText, setManualText] = useState("");
+
+  // Parse manual field text into array of { fieldName, wordLimit }
+  // Format: one field per line, "Field Name | word limit" (pipe-separated)
+  // Lines without a pipe treat the whole line as fieldName with unspecified limit
+  // Empty lines and lines starting with # are ignored
+  const parseManualFields = (text) => {
+    if (!text || !text.trim()) return [];
+    return text
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith("#"))
+      .map(line => {
+        const pipeIdx = line.indexOf("|");
+        if (pipeIdx === -1) {
+          return { fieldName: line.trim(), wordLimit: "unspecified" };
+        }
+        return {
+          fieldName: line.slice(0, pipeIdx).trim(),
+          wordLimit: line.slice(pipeIdx + 1).trim() || "unspecified"
+        };
+      })
+      .filter(f => f.fieldName);
+  };
 
   // Reset opportunity selection when project changes (available list shifts)
   useEffect(() => {
@@ -4177,7 +4167,13 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
 
   const generate = () => {
     if (selO === null || !projects[selP]) return;
-    runGenerate(selO, selP);
+    const manualFields = manualOpen ? parseManualFields(manualText) : [];
+    runGenerate(selO, selP, manualFields.length > 0 ? manualFields : undefined);
+    // Collapse the override after firing so it doesn't silently apply to the next generation
+    if (manualFields.length > 0) {
+      setManualOpen(false);
+      setManualText("");
+    }
   };
 
   const setCheck = (idx, key, val) => {
@@ -4219,23 +4215,14 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
   if (view !== null && apps[view]) {
     const app = apps[view];
     const c = app.content || {};
-    // Standard section metadata — kept in sync with the generate prompt's standardSectionsNeeded enum
+    // Standard section metadata
     const standardSectionMeta = {
       coverLetter: "Cover Letter",
       projectStatement: "Project Statement",
       artistStatement: "Artist Statement",
-      directorsStatement: "Director's Statement",
-      personalStatement: "Personal Statement",
-      logline: "Logline",
-      shortSynopsis: "Short Synopsis",
-      longSynopsis: "Long Synopsis",
       budgetJustification: "Budget Justification",
       impactStatement: "Impact Statement",
-      timeline: "Timeline",
-      comparableFilms: "Comparable Films",
-      targetAudience: "Target Audience",
-      distributionStrategy: "Distribution Strategy",
-      bios: "Bios"
+      timeline: "Timeline"
     };
     const allStandardKeys = Object.keys(standardSectionMeta);
 
@@ -4397,15 +4384,6 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
           </div>
           {isStale(app) && <Bdg color={C.wn}>STALE</Bdg>}
           <Bdg color={sc[app.status]}>{app.status}</Bdg>
-          {canEdit && (
-            <Btn
-              variant="ghost"
-              small
-              onClick={() => setRefreshMdl(view)}
-              disabled={isRefreshing(app.id)}
-              title="Re-run research and regenerate this application's content"
-            >{isRefreshing(app.id) ? "🔄 Refreshing..." : "🔄 Refresh"}</Btn>
-          )}
         </div>
 
         <Card style={{
@@ -4654,7 +4632,7 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
           </Card>
         )}
 
-        {c.requirements && (c.requirements.summary || (c.requirements.standardSectionsNeeded && c.requirements.standardSectionsNeeded.length > 0)) && (
+        {((c.requirements && (c.requirements.summary || (c.requirements.standardSectionsNeeded && c.requirements.standardSectionsNeeded.length > 0))) || (c.formFieldsFound && Array.isArray(c.formFieldsFound) && c.formFieldsFound.length > 0)) && (
           <Card style={{
             marginBottom: "12px",
             borderColor: C.ac + "40",
@@ -4667,27 +4645,57 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
               color: C.ac,
               marginBottom: "4px"
             }}>📋 What This Application Requires</h3>
-            <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "10px" }}>
+            <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "14px" }}>
               Based on the AI's research of this opportunity's actual submission guidelines
             </p>
-            <div style={{
-              padding: "10px 12px",
-              background: C.wn + "12",
-              border: "1px solid " + C.wn + "40",
-              borderRadius: "6px",
-              marginBottom: "14px"
-            }}>
-              <p style={{ fontSize: "11px", color: C.tx, lineHeight: 1.5, fontFamily: FN.m }}>
-                ⚠ <strong>Verify before submitting.</strong> The AI's requirements research is not always complete — occasionally it misses fields or mislabels them. Before you submit, open the opportunity's actual application portal and confirm every field is accounted for. If you find a missing field, use Refresh → Regenerate to re-research, or add it as a custom section by editing this application.
-              </p>
-            </div>
-            {c.requirements.summary && (
+            {c.requirements && c.requirements.summary && (
               <p style={{
                 fontSize: "13px",
                 lineHeight: 1.6,
                 color: C.tx,
                 marginBottom: "14px"
               }}>{c.requirements.summary}</p>
+            )}
+            {c.formFieldsFound && Array.isArray(c.formFieldsFound) && c.formFieldsFound.length > 0 && (
+              <div style={{ marginBottom: "14px" }}>
+                <p style={{ ...LS, marginBottom: "6px" }}>FORM FIELDS FOUND</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  {c.formFieldsFound.map((f, i) => (
+                    <div key={i} style={{
+                      fontSize: "12px",
+                      padding: "6px 8px",
+                      background: C.bd + "20",
+                      borderRadius: "4px",
+                      border: "1px solid " + C.bd + "40"
+                    }}>
+                      <p style={{ color: C.tx, marginBottom: "2px" }}>
+                        <strong>{f.fieldName}</strong>
+                        {f.wordLimit && f.wordLimit !== "unspecified" && (
+                          <span style={{ color: C.tm, marginLeft: "6px", fontFamily: FN.m, fontSize: "11px" }}>
+                            · {f.wordLimit}
+                          </span>
+                        )}
+                      </p>
+                      {f.description && (
+                        <p style={{ color: C.tm, fontSize: "11px", marginBottom: "2px" }}>{f.description}</p>
+                      )}
+                      {f.sourceUrl && f.sourceUrl !== "user-provided" && (
+                        <a href={f.sourceUrl} target="_blank" rel="noopener noreferrer" style={{
+                          color: C.tl,
+                          fontSize: "10px",
+                          fontFamily: FN.m,
+                          wordBreak: "break-all"
+                        }}>source: {f.sourceUrl}</a>
+                      )}
+                      {f.sourceUrl === "user-provided" && (
+                        <span style={{ color: C.ac, fontSize: "10px", fontFamily: FN.m }}>
+                          ✓ user-provided field list
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
             {sections.length > 0 && (
               <div style={{ marginBottom: "10px" }}>
@@ -4701,7 +4709,7 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                 </div>
               </div>
             )}
-            {c.requirements.additionalInstructions && (
+            {c.requirements && c.requirements.additionalInstructions && (
               <div style={{ marginTop: "10px" }}>
                 <p style={{ ...LS, marginBottom: "4px" }}>SPECIAL INSTRUCTIONS</p>
                 <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5 }}>
@@ -4711,185 +4719,6 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
             )}
           </Card>
         )}
-
-        {(() => {
-          // Video Links card — user-managed list of URLs for pitch videos, reels, past films, etc.
-          const videoLinks = Array.isArray(app.videoLinks) ? app.videoLinks : [];
-          const updateVideoLinks = (next) => {
-            const updated = [...apps];
-            updated[view] = {
-              ...updated[view],
-              videoLinks: next,
-              editedAt: new Date().toISOString()
-            };
-            save(updated);
-          };
-          const addLink = () => {
-            updateVideoLinks([
-              ...videoLinks,
-              { id: Date.now().toString() + "-" + Math.random().toString(36).slice(2, 6), label: "", url: "", password: "", kind: "pitch", notes: "" }
-            ]);
-          };
-          const updateLink = (idx, patch) => {
-            const next = videoLinks.map((l, i) => i === idx ? { ...l, ...patch } : l);
-            updateVideoLinks(next);
-          };
-          const removeLink = (idx) => {
-            updateVideoLinks(videoLinks.filter((_, i) => i !== idx));
-          };
-          const copyToClipboard = async (text) => {
-            try {
-              await navigator.clipboard.writeText(text);
-            } catch (e) {
-              // Fallback for older browsers
-              const ta = document.createElement("textarea");
-              ta.value = text;
-              document.body.appendChild(ta);
-              ta.select();
-              try { document.execCommand("copy"); } catch (e2) {}
-              document.body.removeChild(ta);
-            }
-          };
-          return (
-            <Card style={{
-              marginBottom: "12px",
-              borderColor: C.tl + "40",
-              background: C.tl + "06"
-            }}>
-              <div style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: "4px"
-              }}>
-                <h3 style={{
-                  fontFamily: FN.d,
-                  fontSize: "18px",
-                  fontStyle: "italic",
-                  color: C.tl
-                }}>🎬 Video Links</h3>
-                {videoLinks.length > 0 && (
-                  <Bdg color={C.tl}>{videoLinks.length} link{videoLinks.length === 1 ? "" : "s"}</Bdg>
-                )}
-              </div>
-              <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "14px" }}>
-                Store pitch videos, sizzle reels, past film links, and work samples for this application. Paste in URL and password (if password-protected) so it's all in one place when you submit.
-              </p>
-              {videoLinks.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "14px" }}>
-                  {videoLinks.map((link, i) => (
-                    <div key={link.id || i} style={{
-                      background: C.bg,
-                      padding: "12px 14px",
-                      borderRadius: "6px",
-                      borderLeft: "3px solid " + C.tl
-                    }}>
-                      <div style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1fr",
-                        gap: "8px",
-                        marginBottom: "8px"
-                      }}>
-                        <div>
-                          <label style={LS}>Label</label>
-                          <input
-                            value={link.label || ""}
-                            placeholder="e.g. Pitch video, Canvas trailer"
-                            onChange={e => updateLink(i, { label: e.target.value })}
-                          />
-                        </div>
-                        <div>
-                          <label style={LS}>Type</label>
-                          <select
-                            value={link.kind || "pitch"}
-                            onChange={e => updateLink(i, { kind: e.target.value })}
-                          >
-                            <option value="pitch">🎯 Pitch Video</option>
-                            <option value="reel">🎞 Sizzle Reel / Director's Reel</option>
-                            <option value="pastFilm">🎬 Past Film / Work Sample</option>
-                            <option value="proofOfConcept">💡 Proof of Concept</option>
-                            <option value="teaser">▶ Teaser / Trailer</option>
-                            <option value="other">📎 Other</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div style={{ marginBottom: "8px" }}>
-                        <label style={LS}>URL</label>
-                        <div style={{ display: "flex", gap: "6px" }}>
-                          <input
-                            value={link.url || ""}
-                            placeholder="https://vimeo.com/... or https://youtube.com/..."
-                            onChange={e => updateLink(i, { url: e.target.value })}
-                            style={{ flex: 1 }}
-                          />
-                          {link.url && (
-                            <>
-                              <Btn
-                                variant="ghost"
-                                small
-                                onClick={() => copyToClipboard(link.url)}
-                                title="Copy URL to clipboard"
-                              >📋</Btn>
-                              <Btn
-                                variant="ghost"
-                                small
-                                onClick={() => window.open(link.url, "_blank")}
-                                title="Open in new tab"
-                              >↗</Btn>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      <div style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1fr auto",
-                        gap: "8px",
-                        alignItems: "end"
-                      }}>
-                        <div>
-                          <label style={LS}>Password (if any)</label>
-                          <div style={{ display: "flex", gap: "6px" }}>
-                            <input
-                              value={link.password || ""}
-                              placeholder="Leave blank if public"
-                              onChange={e => updateLink(i, { password: e.target.value })}
-                              style={{ flex: 1 }}
-                            />
-                            {link.password && (
-                              <Btn
-                                variant="ghost"
-                                small
-                                onClick={() => copyToClipboard(link.password)}
-                                title="Copy password"
-                              >📋</Btn>
-                            )}
-                          </div>
-                        </div>
-                        <div>
-                          <label style={LS}>Notes (optional)</label>
-                          <input
-                            value={link.notes || ""}
-                            placeholder="e.g. 3 min cut, expires May 1"
-                            onChange={e => updateLink(i, { notes: e.target.value })}
-                          />
-                        </div>
-                        <Btn
-                          variant="ghost"
-                          small
-                          onClick={() => {
-                            if (confirm("Remove this video link?")) removeLink(i);
-                          }}
-                          style={{ color: C.dn }}
-                        >✗</Btn>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <Btn variant="secondary" small onClick={addLink}>+ Add Video Link</Btn>
-            </Card>
-          );
-        })()}
 
         {c.accountsRequired && Array.isArray(c.accountsRequired) && c.accountsRequired.length > 0 && (() => {
           const userAccounts = (profile.connectedAccounts || []).map(a => (a.name || "").toLowerCase().trim());
@@ -5659,7 +5488,7 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
           {refreshMdl !== null && apps[refreshMdl] && (
             <div>
               <p style={{ fontSize: "13px", color: C.tm, lineHeight: 1.6, marginBottom: "16px" }}>
-                Re-run the application for <strong style={{ color: C.tx }}>{apps[refreshMdl].projTitle}</strong> against <strong style={{ color: C.tx }}>{apps[refreshMdl].oppName}</strong>. The AI will re-research the opportunity's current requirements and update the draft. Choose how:
+                The latest project analysis for <strong style={{ color: C.tx }}>{apps[refreshMdl].projTitle}</strong> will be used to update this draft. Choose how:
               </p>
 
               <div
@@ -5908,6 +5737,83 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
             </select>
           </div>
         </div>
+        {/* Manual field override — collapsed by default, for when the user has the form field list in hand */}
+        {(() => {
+          const parsed = parseManualFields(manualText);
+          return (
+            <div style={{ marginBottom: "14px" }}>
+              <button
+                onClick={() => setManualOpen(!manualOpen)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: C.tm,
+                  cursor: "pointer",
+                  padding: 0,
+                  fontSize: "12px",
+                  fontFamily: FN.m,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px"
+                }}
+                type="button"
+              >
+                <span style={{ fontSize: "10px" }}>{manualOpen ? "▼" : "▶"}</span>
+                I have the field list (optional — skips field-discovery research)
+                {!manualOpen && parsed.length > 0 && (
+                  <span style={{ color: C.ac, marginLeft: "4px" }}>· {parsed.length} field{parsed.length === 1 ? "" : "s"} ready</span>
+                )}
+              </button>
+              {manualOpen && (
+                <div style={{ marginTop: "10px" }}>
+                  <p style={{ fontSize: "11px", color: C.tm, marginBottom: "6px", lineHeight: 1.5 }}>
+                    One field per line. Format: <code style={{ fontFamily: FN.m, background: C.bd + "20", padding: "1px 4px", borderRadius: "3px" }}>Field Name | word limit</code>. Lines without a pipe treat the whole line as the field name. Example:
+                  </p>
+                  <pre style={{
+                    fontSize: "11px",
+                    color: C.tm,
+                    fontFamily: FN.m,
+                    background: C.bd + "15",
+                    padding: "8px 10px",
+                    borderRadius: "4px",
+                    marginBottom: "8px",
+                    whiteSpace: "pre-wrap"
+                  }}>{`Logline | 25 words
+Synopsis | 60 words
+Summary | 500 words
+Artistic Statement | 500 words`}</pre>
+                  <textarea
+                    value={manualText}
+                    onChange={e => setManualText(e.target.value)}
+                    placeholder="Logline | 25 words&#10;Synopsis | 60 words&#10;..."
+                    rows={6}
+                    style={{
+                      width: "100%",
+                      fontFamily: FN.m,
+                      fontSize: "12px",
+                      padding: "8px 10px",
+                      border: "1px solid " + C.bd + "40",
+                      borderRadius: "4px",
+                      background: C.bd + "08",
+                      color: C.tx,
+                      resize: "vertical"
+                    }}
+                  />
+                  {parsed.length > 0 && (
+                    <p style={{ fontSize: "11px", color: C.ac, marginTop: "6px" }}>
+                      ✓ {parsed.length} field{parsed.length === 1 ? "" : "s"} parsed. The engine will generate content for each and skip auto-discovery.
+                    </p>
+                  )}
+                  {manualText.trim() && parsed.length === 0 && (
+                    <p style={{ fontSize: "11px", color: C.wn, marginTop: "6px" }}>
+                      ⚠ No valid fields parsed. Check the format — one field per line.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
         <Btn
           onClick={generate}
           disabled={selO === null || !projects.length}
@@ -6081,9 +5987,6 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                     {app.hadAnalysis && <span>🔬</span>}
                     {app.hadFiles && <span>📎</span>}
                     {app.deepResearch && <span title="Deep opportunity research">🔍</span>}
-                    {Array.isArray(app.videoLinks) && app.videoLinks.length > 0 && (
-                      <span title={app.videoLinks.length + " video link" + (app.videoLinks.length === 1 ? "" : "s")}>🎬</span>
-                    )}
                     {isStale(app) && <Bdg color={C.wn}>STALE</Bdg>}
                     {app.outcome === "won" && <Bdg color={C.ok}>🏆 WON</Bdg>}
                     {app.outcome === "rejected" && <Bdg color={C.dn}>✗ REJECTED</Bdg>}
@@ -6419,8 +6322,6 @@ function ProfView({ profile, save }) {
   const [keyVisible, setKeyVisible] = useState(false);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMsg, setBackupMsg] = useState("");
-  const [cleanupBusy, setCleanupBusy] = useState(false);
-  const [cleanupMsg, setCleanupMsg] = useState("");
 
   const doSave = () => {
     save(form);
@@ -6624,20 +6525,9 @@ function ProfView({ profile, save }) {
           fontStyle: "italic",
           marginBottom: "6px"
         }}>🔗 Connected Accounts & Memberships</h3>
-        <p style={{ fontSize: "12px", color: C.tm, marginBottom: "10px", lineHeight: 1.5 }}>
-          A reference list of platforms where you already hold an account (Blacklist, Sundance Institute, Film Independent, IMDb Pro, FilmFreeway, Coverfly, Stage 32, etc.). The AI cross-references this list when researching opportunities — if a grant requires a Blacklist account and you've listed one here, it won't flag that as a missing prerequisite.
+        <p style={{ fontSize: "12px", color: C.tm, marginBottom: "16px", lineHeight: 1.5 }}>
+          Track accounts and memberships you hold on industry platforms (Blacklist, Sundance Institute, Film Independent, IMDb Pro, FilmFreeway, WithoutABox, Coverfly, Stage 32, etc.). When an application requires one of these, the AI will cross-reference this list and tell you if you're already covered or need to sign up.
         </p>
-        <div style={{
-          padding: "10px 12px",
-          background: C.pp + "10",
-          border: "1px solid " + C.pp + "30",
-          borderRadius: "6px",
-          marginBottom: "16px"
-        }}>
-          <p style={{ fontSize: "11px", color: C.tx, lineHeight: 1.5 }}>
-            🔒 <strong>Never enter passwords here.</strong> This is a knowledge list, not a password manager. Click the ↗ Login button to open the platform in a new tab, then sign in there. Use 1Password, Bitwarden, or your browser's password manager for credentials.
-          </p>
-        </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "14px" }}>
           {(form.connectedAccounts || []).map((acc, i) => (
             <div key={i} style={{
@@ -6711,47 +6601,6 @@ function ProfView({ profile, save }) {
                   variant="ghost"
                   small
                   onClick={() => {
-                    // Known platform login URLs — more reliable than user-pasted profile URLs
-                    const loginMap = [
-                      { match: /blacklist|black\s*list|blcklst/i, url: "https://blcklst.com/login" },
-                      { match: /sundance/i, url: "https://collab.sundance.org/s/login/" },
-                      { match: /film\s*independent|filmindependent/i, url: "https://www.filmindependent.org/login/" },
-                      { match: /imdb\s*pro|imdbpro/i, url: "https://pro.imdb.com/login" },
-                      { match: /film\s*freeway|filmfreeway/i, url: "https://filmfreeway.com/login" },
-                      { match: /coverfly/i, url: "https://writers.coverfly.com/login" },
-                      { match: /stage\s*32|stage32/i, url: "https://www.stage32.com/login" },
-                      { match: /wga|writers\s*guild/i, url: "https://www.wga.org/members/login" },
-                      { match: /tracking\s*board/i, url: "https://www.trackingb.com/login" },
-                      { match: /final\s*draft/i, url: "https://www.finaldraft.com/account/login/" },
-                      { match: /withoutabox/i, url: "https://www.withoutabox.com/login" }
-                    ];
-                    const name = (acc.name || "").trim();
-                    const url = (acc.url || "").trim();
-
-                    // 1. Try a known-platform match on the name
-                    const known = loginMap.find(p => p.match.test(name));
-                    if (known) {
-                      window.open(known.url, "_blank", "noopener,noreferrer");
-                      return;
-                    }
-                    // 2. Fall back to user-provided URL
-                    if (url) {
-                      // Normalize: add https:// if missing
-                      const normalized = /^https?:\/\//i.test(url) ? url : "https://" + url;
-                      window.open(normalized, "_blank", "noopener,noreferrer");
-                      return;
-                    }
-                    // 3. Nothing to open
-                    alert("No URL saved for this account, and the platform name isn't recognized. Add a URL to the account to use the Login button.");
-                  }}
-                  title="Open login page in a new tab"
-                  disabled={!acc.name && !acc.url}
-                  style={{ color: C.ac }}
-                >↗ Login</Btn>
-                <Btn
-                  variant="ghost"
-                  small
-                  onClick={() => {
                     const next = (form.connectedAccounts || []).filter((_, j) => j !== i);
                     setForm({ ...form, connectedAccounts: next });
                   }}
@@ -6771,98 +6620,6 @@ function ProfView({ profile, save }) {
         <p style={{ fontSize: "11px", color: C.tm, marginTop: "10px" }}>
           Don't forget to click "Save All" at the top after editing.
         </p>
-      </Card>
-
-      <Card style={{ marginTop: "20px", borderColor: C.wn + "40" }}>
-        <h3 style={{
-          fontFamily: FN.d,
-          fontSize: "20px",
-          fontStyle: "italic",
-          marginBottom: "6px"
-        }}>🧹 Clean Up Citation Tags</h3>
-        <p style={{ fontSize: "12px", color: C.tm, marginBottom: "16px", lineHeight: 1.5 }}>
-          Older analyses and applications may contain <code style={{ background: C.bg, padding: "1px 6px", borderRadius: "3px", fontSize: "11px" }}>&lt;cite&gt;</code> tags, footnote markers <code style={{ background: C.bg, padding: "1px 6px", borderRadius: "3px", fontSize: "11px" }}>[1]</code>, or other markup that leaked in from web search research. New generations are automatically sanitized — but this button retroactively cleans every project analysis and application section already stored in your browser. Safe to run: it only strips markup, never touches actual content.
-        </p>
-        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
-          <Btn
-            disabled={cleanupBusy}
-            onClick={async () => {
-              if (!confirm("This will scan every project analysis and application in your browser and strip out cite tags, footnote markers, and HTML markup. Content text will be preserved. Export a backup first if you want a rollback option. Continue?")) {
-                return;
-              }
-              setCleanupBusy(true);
-              setCleanupMsg("");
-              try {
-                let projectsCleaned = 0;
-                let appsCleaned = 0;
-                let oppsCleaned = 0;
-
-                // Clean projects (analysis field)
-                const projsResult = await window.storage.get(SK.PROJECTS);
-                if (projsResult && projsResult.value) {
-                  const projs = JSON.parse(projsResult.value);
-                  const cleanedProjs = projs.map(p => {
-                    if (!p.analysis) return p;
-                    const before = JSON.stringify(p.analysis);
-                    const cleaned = sanitizeStrings(p.analysis);
-                    const after = JSON.stringify(cleaned);
-                    if (before !== after) projectsCleaned++;
-                    return { ...p, analysis: cleaned };
-                  });
-                  await window.storage.set(SK.PROJECTS, JSON.stringify(cleanedProjs));
-                }
-
-                // Clean applications (all fields, but especially content)
-                const appsResult = await window.storage.get(SK.APPS);
-                if (appsResult && appsResult.value) {
-                  const appsData = JSON.parse(appsResult.value);
-                  const cleanedApps = appsData.map(a => {
-                    const before = JSON.stringify(a);
-                    const cleaned = sanitizeStrings(a);
-                    const after = JSON.stringify(cleaned);
-                    if (before !== after) appsCleaned++;
-                    return cleaned;
-                  });
-                  await window.storage.set(SK.APPS, JSON.stringify(cleanedApps));
-                }
-
-                // Clean opportunities
-                const oppsResult = await window.storage.get(SK.OPPS);
-                if (oppsResult && oppsResult.value) {
-                  const oppsData = JSON.parse(oppsResult.value);
-                  const cleanedOpps = oppsData.map(o => {
-                    const before = JSON.stringify(o);
-                    const cleaned = sanitizeStrings(o);
-                    const after = JSON.stringify(cleaned);
-                    if (before !== after) oppsCleaned++;
-                    return cleaned;
-                  });
-                  await window.storage.set(SK.OPPS, JSON.stringify(cleanedOpps));
-                }
-
-                const total = projectsCleaned + appsCleaned + oppsCleaned;
-                if (total === 0) {
-                  setCleanupMsg("✓ Nothing to clean — your data was already tidy.");
-                } else {
-                  setCleanupMsg("✓ Cleaned " + projectsCleaned + " project analyses, " + appsCleaned + " applications, " + oppsCleaned + " opportunities. Reloading in 2 seconds to refresh the display...");
-                  setTimeout(() => window.location.reload(), 2000);
-                }
-              } catch (e) {
-                setCleanupMsg("✗ Cleanup failed: " + (e.message || "unknown error"));
-              } finally {
-                setCleanupBusy(false);
-              }
-            }}
-          >{cleanupBusy ? "Cleaning..." : "🧹 Scan & Clean All Data"}</Btn>
-          {cleanupMsg && (
-            <p style={{
-              fontSize: "12px",
-              color: cleanupMsg.startsWith("✓") ? C.ok : C.dn,
-              fontFamily: FN.m,
-              marginLeft: "8px"
-            }}>{cleanupMsg}</p>
-          )}
-        </div>
       </Card>
 
       <Card style={{ marginTop: "20px", borderColor: C.tl + "40" }}>
