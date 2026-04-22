@@ -8933,8 +8933,24 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
               : (["won", "rejected", "waitlisted", "ghosted"].includes(listFilter))
                 ? apps.filter(a => a.outcome === listFilter)
                 : apps.filter(a => a.status === listFilter);
-            // Sort: most recent first, using the most recent timestamp on each app
+            // Sort: verified first, then un-audited, then uncertain, then failed (all bottom).
+            // Within each group, most recent first.
+            // Failed items at the bottom so the user's eye lands on actionable verified work first.
+            const auditRank = (app) => {
+              const verdict = app.auditResult && app.auditResult.overallVerdict;
+              const dismissed = app.auditFlagDismissed;
+              // Dismissed flags go to the verified bucket — user has reviewed and cleared.
+              if (verdict === "verified" || dismissed) return 0;
+              if (!verdict) return 1;             // never audited
+              if (verdict === "uncertain") return 2;
+              if (verdict === "fail") return 3;
+              return 1;                            // fallback for unexpected values
+            };
             const sorted = [...filtered].sort((a, b) => {
+              const rankA = auditRank(a);
+              const rankB = auditRank(b);
+              if (rankA !== rankB) return rankA - rankB;
+              // Within same audit rank, sort by recency (most recent first)
               const ta = new Date(a.submittedAt || a.refreshedAt || a.editedAt || a.createdAt).getTime();
               const tb = new Date(b.submittedAt || b.refreshedAt || b.editedAt || b.createdAt).getTime();
               return tb - ta;
