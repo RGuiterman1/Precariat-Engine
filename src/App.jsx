@@ -1716,56 +1716,80 @@ Does this opportunity have a demographic or thematic eligibility requirement (e.
 - Only fail if the opportunity clearly requires an attribute the project explicitly cannot satisfy (e.g., opportunity requires "first-time filmmaker only" and the project team has prior credits visible in the materials).
 
 GATE 4 — AVAILABILITY:
-Is this opportunity CURRENTLY AVAILABLE for submissions as of ${verifyTodayReadable}? This is a critical check. Candidate discovery sometimes mislabels closed, discontinued, or paused opportunities as active when they're not.
+Is this opportunity CURRENTLY AVAILABLE for submissions as of ${verifyTodayReadable}?
+
+🚨 SOURCE HIERARCHY — READ THIS BEFORE EVALUATING:
+Different sources on the web can contradict each other. A 2025 Submittable archive page will list 2025 deadlines as "the deadline." A 2025 aggregator blog post will repeat 2025 dates. Meanwhile the program's OFFICIAL HOMEPAGE may show a current 2026 cycle clearly. You MUST seek the authoritative source before making a verdict.
+
+AUTHORITATIVE SOURCES (in order of preference):
+1. The program's OWN OFFICIAL HOMEPAGE or program page (e.g., filmindependent.org/programs/...)
+2. The program's official application page on its own domain
+3. The program's official FAQ or guidelines page on its own domain
+
+NON-AUTHORITATIVE / STALE SOURCES (do not trust these for deadline verification):
+- Submittable archive pages from past cycles (URLs containing "submittable.com/submit/..." with past-year context)
+- Third-party aggregator sites (fundsforngos.org, us.fundsforngos.org, contemporaryperformance.com, filmfreeway submission archives, nyff.org listings, etc.) — these often list past-cycle info
+- Blog posts from 2024 or 2025 listing "current opportunities"
+- Cached versions of past cycles
+
+RULE: If you find information ONLY on a non-authoritative source that conflicts with what an authoritative source says, the authoritative source wins. If you find information ONLY on a non-authoritative source and cannot verify via the program's own site, return UNCERTAIN — not FAIL.
+
+RULE: You MUST name the sourceUrl in your evidence. If the URL is a Submittable archive, aggregator, or third-party listing, explicitly acknowledge this in the "concern" field: "Evidence found only on non-authoritative source [X]; unable to verify on program's official site." In such cases the verdict should be UNCERTAIN.
+
+RULE: Before concluding a program has closed or discontinued, you MUST check the program's own official homepage. If the homepage shows an active program page (not a "program ended" page), and you cannot find an explicit discontinuation/past-deadline-no-future-cycle statement there, return UNCERTAIN.
+
+🚨 CONSERVATIVE BIAS — DEFAULT TO UNCERTAIN, NOT FAIL:
+A FAIL verdict tells the user to delete their draft application. A false FAIL destroys real work. An UNCERTAIN verdict just asks the user to verify. Therefore:
+
+- When in doubt: UNCERTAIN.
+- When sources conflict: UNCERTAIN.
+- When the program's official site is unclear or wasn't found: UNCERTAIN.
+- When the only evidence of "past deadline" is from a Submittable archive or third-party aggregator: UNCERTAIN.
+- When the candidate provided a future deadline but web search is inconclusive: UNCERTAIN.
+- FAIL requires: (a) explicit current-year evidence from the program's OWN site, AND (b) that evidence clearly states no future cycle exists or the program is discontinued, AND (c) no contradicting evidence anywhere on the program's official site.
+
+Any one of those three conditions missing → UNCERTAIN.
 
 🚨 MANDATORY DATE COMPARISON — YOU MUST DO THIS STEP EXPLICITLY:
-Before writing the availabilityGate verdict, you MUST perform this three-step calculation in your reasoning (NOT in the output):
+Before writing the availabilityGate verdict, perform this three-step calculation in your reasoning:
 
-STEP 1: Identify the deadline date you found in the guidelines or candidate claim. Parse it into: MONTH, DAY, YEAR.
+STEP 1: Identify the deadline date you found. Parse it into: MONTH, DAY, YEAR.
 STEP 2: State today's date explicitly: Today is ${verifyTodayReadable} (${verifyTodayISO}). Parse today into: MONTH, DAY, YEAR.
-STEP 3: Compare year first, then month, then day. The deadline date is in the FUTURE (has not passed) if:
+STEP 3: Compare year first, then month, then day. The deadline is in the FUTURE (has not passed) if:
   (year of deadline) > (year of today), OR
   (year of deadline) == (year of today) AND (month of deadline) > (month of today), OR
   (year of deadline) == (year of today) AND (month of deadline) == (month of today) AND (day of deadline) >= (day of today)
 
-Only if ALL three of those conditions are false has the deadline actually passed.
+Only if ALL three are false has the deadline actually passed.
 
 WORKED EXAMPLE: Today is April 22, 2026. Deadline is May 12, 2026.
-- Year: 2026 vs 2026. Equal.
-- Month: May (5) vs April (4). 5 > 4. Therefore: deadline is in the FUTURE.
-- PASS availability.
+- Year equal. Month: 5 > 4. Deadline is in the FUTURE. PASS.
 
 COUNTER-EXAMPLE: Today is April 22, 2026. Deadline is April 2, 2026.
-- Year: 2026 vs 2026. Equal.
-- Month: April (4) vs April (4). Equal.
-- Day: 2 vs 22. 2 < 22. Therefore: deadline HAS PASSED.
-- FAIL availability (unless a future cycle is announced).
+- Year equal. Month equal. Day: 2 < 22. Deadline HAS PASSED by date comparison.
+- BUT: even a passed deadline does NOT automatically mean FAIL. You still must apply the CONSERVATIVE BIAS rules above — check the program's own site, confirm no future cycle is announced, check for contradicting evidence. A passed deadline with an announced next cycle = PASS (next cycle is future). A passed deadline where you can't find the program's official site = UNCERTAIN. A passed deadline with CONFIRMED no-future-cycle on the program's own page = FAIL.
+
+The date comparison is NECESSARY for a FAIL-by-past-deadline verdict (deadline must actually be past) but NOT SUFFICIENT (must also meet all three conservative-bias conditions).
 
 🚨 TRAINING-DATA BIAS WARNING:
-Your training data likely predates today's date (${verifyTodayReadable}). You may have strong priors from 2024 or 2025 about what the "most recent" cycle of a program was. Those priors are OBSOLETE. A program that had a 2025 deadline almost certainly has a 2026 deadline now — annual programs keep running annually. You MUST use web search to find the CURRENT year's cycle information, and you MUST NOT rely on what you remember from training.
+Your training data likely predates ${verifyTodayReadable}. Any "most recent cycle" you remember from training is STALE. Annual programs keep running annually. A program that ran in 2025 almost certainly has a 2026 cycle now. Absence of 2026 info in your training memory is NOT evidence the program has closed — it's evidence your training is stale.
 
-Specifically, if you find yourself concluding "the 2025 cycle has already completed and no 2026 cycle has been announced yet" — STOP. This conclusion is almost always wrong. It reflects training-data staleness, not actual program status. Instead:
-- Search specifically for "[program name] 2026 deadline" or "[program name] current application"
-- Look for news, press releases, or calendar entries from 2026 (today's year)
-- Check the program's official site for the CURRENT open call, not the one you remember
-- If a candidate provided a specific deadline like "May 7, 2026" and that date is in the future (apply the MANDATORY DATE COMPARISON above), TRUST that as the signal pointing you to the real current cycle — and search to CONFIRM it, not to disprove it
+If you find only 2025-cycle information via web search and cannot find 2026-cycle information on the program's OWN site, the verdict is UNCERTAIN, not FAIL. Train yourself to search for "[program name] 2026 deadline" or "[program name] current application 2026."
 
-ALSO CRITICAL: If the candidate provided a specific deadline (e.g., "${candidateDeadline}") and that date is TODAY OR LATER (verified via the MANDATORY DATE COMPARISON), the default assumption is that this is a current, valid deadline for this cycle. Your job is to verify it, not to contradict it. If you cannot find the deadline on the guidelines page, mark UNCERTAIN, not FAIL. The candidate's date claim is a positive signal; absence of confirmation is not refutation.
+This gate covers THREE distinct ways an opportunity can be unavailable:
 
-This gate covers THREE distinct ways an opportunity can be unavailable. You must check for all three:
+(a) **Past deadline with no future cycle announced** — meets ALL of the conservative criteria above. Requires authoritative-source confirmation.
 
-(a) **Past deadline** — the most recent annual/cyclical deadline has passed AND you have CONFIRMED via current web search that no future deadline has been announced. You cannot conclude this from training data alone. You must find CURRENT evidence on the program's website that no new cycle is open. CRITICAL: the phrase "we engage awardees over X years" describes the AWARD period, NOT rolling intake. "Cohort-based" or "we accept every two years" indicates CYCLICAL intake, NOT rolling.
+(b) **Discontinued** — the program has explicitly ended. Requires EXPLICIT current-year language on the program's OWN site like "no longer offered," "discontinued," "we are no longer offering this fellowship."
 
-(b) **Discontinued** — the program has been explicitly ended, cancelled, or permanently retired. Look for language like "no longer offered," "discontinued due to lack of funding," "we are no longer offering this fellowship," "program has been sunset," "this grant has ended." This requires EXPLICIT current-year language from the program, not an inference from absence of recent announcements.
-
-(c) **On hold / paused** — the program exists but is currently not accepting submissions pending funding, review, or restructuring. Look for explicit current-year language like "currently on hiatus," "paused pending funding," "not accepting applications at this time," "we hope to resume in [year]."
+(c) **On hold / paused** — explicit current-year language on the program's OWN site like "currently on hiatus," "paused pending funding."
 
 Verdicts:
-- PASS: You find via current web search either (i) a specific FUTURE deadline after ${verifyTodayReadable}, OR (ii) explicit guideline language confirming continuous year-round intake. If the candidate provided a future deadline and web search confirms the program is active, PASS.
-- FAIL: You have EXPLICIT current-year evidence that the program is discontinued, on hold, OR that the most recent cycle's deadline has definitively passed with no future cycle announced. Evidence must be from current-year sources (guidelines page, current press release, current FAQ) — not absence of information.
-- UNCERTAIN: You can't clearly determine the status. If in doubt, UNCERTAIN — not FAIL. Missing confirmation is not proof of absence.
+- PASS: Authoritative source confirms a specific FUTURE deadline (verified via MANDATORY DATE COMPARISON) OR explicit rolling-intake language on the program's own site.
+- FAIL: All three conservative criteria met (authoritative source + clear no-future-cycle + no contradicting evidence). Rare.
+- UNCERTAIN: Any ambiguity, any non-authoritative-source-only evidence, any contradiction between sources, any missing official-site check. Default.
 
-The candidate claimed the deadline is "${candidateDeadline}". If that date parses to today (${verifyTodayReadable}) or later, start from the assumption that it may be valid and search to confirm or deny. Do not default to "no future cycle announced" based on training-data recall. That conclusion requires CURRENT web evidence of the program explicitly stating so.
+The candidate claimed the deadline is "${candidateDeadline}". If that date is TODAY OR LATER (verified via MANDATORY DATE COMPARISON), that is evidence pointing to the current cycle. Your job is to verify via the program's own official site, not to disprove via Submittable archives.
 
 GATE 5 — SERVICE-STAGE FIT:
 Does the SERVICE this program offers actually help a project at the "${project.stage}" stage? This is NOT about whether the applicant is eligible — that's stage gate. This is about whether the program's OFFERED HELP matches what a project at this stage actually needs.
