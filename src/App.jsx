@@ -1415,7 +1415,16 @@ For demographic/thematic-specific opportunities: recognize these as equivalent:
 If this project declares an attribute (see Eligibility Attributes above), match it against synonyms, not exact strings.
 
 🗓 DEADLINE REQUIREMENT (NON-NEGOTIABLE):
-Today is ${todayReadable}. Only return opportunities whose deadline is TODAY OR LATER. If the deadline has already passed, EXCLUDE THE OPPORTUNITY entirely — do not return it even if it would normally be a strong match. If an opportunity is cyclical (annual, biannual) and this year's deadline has passed, either find the NEXT cycle's deadline or exclude it if the next cycle isn't yet announced.
+Today is ${todayReadable}. Only return opportunities whose deadline is TODAY OR LATER. If the deadline has already passed, EXCLUDE THE OPPORTUNITY entirely — do not return it even if it would normally be a strong match.
+
+🚨 TRAINING-DATA STALENESS WARNING:
+Your training data predates today. You may remember programs having 2024 or 2025 deadlines as the "most recent." Those memories are STALE. Annual programs are still running annually — a program that had a 2025 deadline almost certainly has a 2026 deadline now. When searching:
+- Explicitly search for the CURRENT year's cycle (e.g., "Sundance Screenwriters Lab 2026 deadline," "Gotham Week 2026 extended deadline")
+- Trust CURRENT web results over your training memory
+- If you only find older-cycle information, search harder with queries like "[program] current application 2026" or "[program] upcoming deadline"
+- A program being active in 2024/2025 is STRONG evidence it's active now. Do not exclude based on "no 2026 info in my training data" — that's staleness, not evidence of discontinuation
+
+If an opportunity is cyclical and this year's deadline has passed, either find the NEXT cycle's deadline or exclude it if you cannot find any current or future cycle via fresh web search.
 
 "Rolling" deadline has a STRICT definition. Only use deadline: "rolling" when the grant explicitly states "applications accepted on a rolling basis," "continuous intake," "year-round submissions," or equivalent language. DO NOT use "rolling" when:
 - The grant has an annual deadline (even if the relationship with awardees spans multiple years)
@@ -1688,20 +1697,31 @@ Does this opportunity have a demographic or thematic eligibility requirement (e.
 GATE 4 — AVAILABILITY:
 Is this opportunity CURRENTLY AVAILABLE for submissions as of ${verifyTodayReadable}? This is a critical check. Candidate discovery sometimes mislabels closed, discontinued, or paused opportunities as active when they're not.
 
+🚨 CRITICAL TRAINING-DATA BIAS WARNING — READ THIS FIRST:
+Your training data likely predates today's date (${verifyTodayReadable}). You may have strong priors from 2024 or 2025 about what the "most recent" cycle of a program was. Those priors are OBSOLETE. A program that had a 2025 deadline almost certainly has a 2026 deadline now — annual programs keep running annually. You MUST use web search to find the CURRENT year's cycle information, and you MUST NOT rely on what you remember from training.
+
+Specifically, if you find yourself concluding "the 2025 cycle has already completed and no 2026 cycle has been announced yet" — STOP. This conclusion is almost always wrong. It reflects training-data staleness, not actual program status. Instead:
+- Search specifically for "[program name] 2026 deadline" or "[program name] current application"
+- Look for news, press releases, or calendar entries from 2026 (today's year)
+- Check the program's official site for the CURRENT open call, not the one you remember
+- If a candidate provided a specific deadline like "May 7, 2026" and that date is in the future, TRUST that as the signal pointing you to the real current cycle — and search to CONFIRM it, not to disprove it
+
+ALSO CRITICAL: If the candidate provided a specific deadline (e.g., "${candidateDeadline}") and that date parses to TODAY OR LATER, the default assumption is that this is a current, valid deadline for this cycle. Your job is to verify it, not to contradict it. If you cannot find the deadline on the guidelines page, mark UNCERTAIN, not FAIL. The candidate's date claim is a positive signal; absence of confirmation is not refutation.
+
 This gate covers THREE distinct ways an opportunity can be unavailable. You must check for all three:
 
-(a) **Past deadline** — the most recent annual/cyclical deadline has passed AND the next cycle's deadline has not been announced yet. CRITICAL: the phrase "we engage awardees over X years" describes the AWARD period, NOT rolling intake. "Cohort-based" or "we accept every two years" indicates CYCLICAL intake, NOT rolling.
+(a) **Past deadline** — the most recent annual/cyclical deadline has passed AND you have CONFIRMED via current web search that no future deadline has been announced. You cannot conclude this from training data alone. You must find CURRENT evidence on the program's website that no new cycle is open. CRITICAL: the phrase "we engage awardees over X years" describes the AWARD period, NOT rolling intake. "Cohort-based" or "we accept every two years" indicates CYCLICAL intake, NOT rolling.
 
-(b) **Discontinued** — the program has been explicitly ended, cancelled, or permanently retired. Look for language like "no longer offered," "discontinued due to lack of funding," "we are no longer offering this fellowship," "program has been sunset," "this grant has ended." If the official guidelines page or FAQ says the program doesn't exist anymore, the opportunity FAILS availability.
+(b) **Discontinued** — the program has been explicitly ended, cancelled, or permanently retired. Look for language like "no longer offered," "discontinued due to lack of funding," "we are no longer offering this fellowship," "program has been sunset," "this grant has ended." This requires EXPLICIT current-year language from the program, not an inference from absence of recent announcements.
 
-(c) **On hold / paused** — the program exists but is currently not accepting submissions pending funding, review, or restructuring. Look for "currently on hiatus," "paused pending funding," "not accepting applications at this time," "we hope to resume in [year]."
+(c) **On hold / paused** — the program exists but is currently not accepting submissions pending funding, review, or restructuring. Look for explicit current-year language like "currently on hiatus," "paused pending funding," "not accepting applications at this time," "we hope to resume in [year]."
 
 Verdicts:
-- PASS: You find either (i) a specific FUTURE deadline after ${verifyTodayReadable}, OR (ii) explicit guideline language confirming continuous year-round intake ("applications accepted on a rolling basis," "continuous intake," "year-round submissions"). The program is active and accepting.
-- FAIL: ANY of the three unavailability conditions above is confirmed. State WHICH condition in the evidence — discontinued, past-deadline, or on-hold. The actualDeadline field should say what kind of failure this is.
-- UNCERTAIN: You can't clearly determine the status from the guidelines page.
+- PASS: You find via current web search either (i) a specific FUTURE deadline after ${verifyTodayReadable}, OR (ii) explicit guideline language confirming continuous year-round intake. If the candidate provided a future deadline and web search confirms the program is active, PASS.
+- FAIL: You have EXPLICIT current-year evidence that the program is discontinued, on hold, OR that the most recent cycle's deadline has definitively passed with no future cycle announced. Evidence must be from current-year sources (guidelines page, current press release, current FAQ) — not absence of information.
+- UNCERTAIN: You can't clearly determine the status. If in doubt, UNCERTAIN — not FAIL. Missing confirmation is not proof of absence.
 
-The candidate claimed the deadline is "${candidateDeadline}". VERIFY THIS CLAIM. If the candidate said "rolling" but the guidelines actually show an annual deadline that has passed, FAIL. If the candidate lists a program that FAQ/guidelines say is discontinued, FAIL. If the candidate provided a specific date, verify it matches what the guidelines currently show.
+The candidate claimed the deadline is "${candidateDeadline}". If that date parses to today (${verifyTodayReadable}) or later, start from the assumption that it may be valid and search to confirm or deny. Do not default to "no future cycle announced" based on training-data recall. That conclusion requires CURRENT web evidence of the program explicitly stating so.
 
 GATE 5 — SERVICE-STAGE FIT:
 Does the SERVICE this program offers actually help a project at the "${project.stage}" stage? This is NOT about whether the applicant is eligible — that's stage gate. This is about whether the program's OFFERED HELP matches what a project at this stage actually needs.
