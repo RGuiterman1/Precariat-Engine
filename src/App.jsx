@@ -443,9 +443,11 @@ async function askClaude(content, search, attempt = 0) {
     // URLs; web_fetch reads full page contents when the model needs depth beyond
     // search snippets. Critical for availability verification where the 2026 cycle
     // info lives on pages deeper than the search snippet landing page.
+    // max_uses: 15 gives the model budget to fetch 5-10 pages across multiple
+    // domains for thorough research. Each fetch costs tokens but catches stale data.
     body.tools = [
       { type: "web_search_20250305", name: "web_search" },
-      { type: "web_fetch_20250910", name: "web_fetch", max_uses: 5 }
+      { type: "web_fetch_20250910", name: "web_fetch", max_uses: 15 }
     ];
   }
   let res;
@@ -1799,54 +1801,62 @@ JavaScript has already done the date arithmetic for you. Do NOT re-check dates o
 
 ${deadlineContextForPrompt}
 
-🚨 MANDATORY MULTI-PAGE RESEARCH — READ THIS BEFORE YOU START:
+🚨 MANDATORY THOROUGH RESEARCH — READ THIS BEFORE YOU START:
 
-Programs' websites are layered. A landing page or blog post may show stale 2025 information while the ACTUAL current-cycle info lives one or two clicks deeper — on the application page, the FAQ, or the deadlines page.
+Film program websites are layered. A landing page may show stale 2025 information while the ACTUAL current-cycle info is two or three clicks deeper — on the application page, FAQ, deadlines page, or a "how to apply" sub-page. Program calendars are often separate pages. Sometimes the current-cycle open-call announcement is only on a news/press page that IS authoritative (distinct from generic blog posts).
 
-Previous failures have come from the AI reading only the first page of search results (often a 2025 blog post or old news article), seeing "2025" prominently, and wrongly concluding "stale." The 2026 info was there — just one page deeper on the program's own site.
+You have generous tool budget: up to 15 web_fetch calls and multiple web_search queries. USE THEM. A verdict based on 1-2 page reads is almost certainly shallow. A verdict based on 5-8 page reads across the program's own site is thorough.
 
-TO AVOID THIS FAILURE, YOU MUST:
+FOLLOW THIS RESEARCH PATTERN:
 
-1. Start with web_search to locate the program's OWN domain (filmindependent.org, sundance.org, gothamfilm.org, etc.)
+STEP 1 — Locate the program's own domain via web_search. Multiple search queries if needed:
+  • "[program name] [current year] deadline"
+  • "[program name] application [current year]"
+  • "[program name] FAQ submission"
+  • "[program name] guidelines"
+Cast a wide net. 2-4 searches is reasonable.
 
-2. DO NOT STOP at the first search result. Use web_fetch to read the FULL CONTENT of at least TWO of these pages on the program's own domain:
-   - The program's main page (e.g., filmindependent.org/programs/artist-development/screenwriting-lab)
-   - The current application or submission page (look for "apply," "submit," "application," "call for applications")
-   - The FAQ or guidelines page (look for "FAQ," "guidelines," "how to apply")
-   - The deadlines or calendar page (look for "deadlines," "dates," "schedule")
+STEP 2 — Read the ACTUAL pages, not just snippets. Use web_fetch to read the full content of:
+  a. The main program page on the program's own domain
+  b. The application/submission page (look for "apply," "submit," "application")
+  c. The FAQ or guidelines page
+  d. The deadlines/calendar page if it exists
+  e. If the site has a "news" or "announcements" section, the most recent current-cycle announcement
 
-3. The program's MAIN LANDING PAGE is often stale — it may not have been updated for the current cycle. The CURRENT APPLICATION PAGE and FAQ are more reliable sources for current-cycle deadlines.
+Don't stop at 2 pages. If those 2 don't have definitive current-cycle info, keep fetching: the site navigation, the "about the program" page, the "past recipients" page (which often mentions recent cycle years), the handbook/PDF if linked. BE THOROUGH.
 
-4. If a search result URL contains "/blog/", "/news/", or "/press/", DO NOT rely on it as your primary source. Those are articles, not current program pages. Use them only as supplementary evidence.
+STEP 3 — Synthesize across pages. If the main page says "2025" but the application page says "2027 open call now accepting," the application page WINS. Current-cycle announcements on dedicated pages trump stale main-page text.
 
-5. If you cannot fetch at least TWO pages on the program's own domain (main + application OR main + FAQ), the verdict MUST be UNCERTAIN. You have not done enough research to FAIL.
+STEP 4 — Only after doing steps 1-3, render a verdict. Base it on the MOST SPECIFIC AND MOST CURRENT page you found, not the first page you landed on.
 
-SOURCE HIERARCHY:
-- AUTHORITATIVE (trust these): program's own domain, specifically the application page, FAQ page, or deadlines page
-- SECONDARY (supplement only): program's own blog, news, or press pages on their own domain
-- NON-AUTHORITATIVE (never rely on alone): Submittable archives, aggregators (fundsforngos.org, contemporaryperformance.com, us.fundsforngos.org), third-party blog posts
+HALLMARKS OF SHALLOW RESEARCH (avoid these — they produce wrong verdicts):
+  • Relying on a single search snippet instead of fetching the actual page
+  • Reading only the program's main landing page
+  • Citing a blog post or news article as primary evidence
+  • Concluding "no 2026 cycle" from absence of info in first 2 results
+  • Treating Submittable archive pages as current-cycle data
 
-VERDICTS BY JS DATE STATUS:
+HALLMARKS OF THOROUGH RESEARCH (aim for these):
+  • Fetched 4+ pages on the program's own domain
+  • Read the actual application page, not just the main page
+  • Synthesized across pages when they disagreed
+  • Named the specific URL where current-cycle evidence lives
+  • Acknowledged pages you couldn't fetch or that were ambiguous
 
-If JS says FUTURE:
-- PASS when the program's application page OR FAQ confirms the program is active with a deadline that matches or is close to the candidate's claimed deadline.
-- UNCERTAIN when you couldn't fetch the application/FAQ pages, OR the pages are ambiguous.
-- FAIL only when the application/FAQ page explicitly states the program is discontinued or on permanent hiatus.
+SOURCE HIERARCHY (in order of authority):
+  1. The program's CURRENT APPLICATION PAGE on its own domain (most authoritative)
+  2. The program's FAQ or guidelines page
+  3. The program's deadlines or calendar page
+  4. The program's main program page
+  5. Press releases or news articles ON the program's own domain (dated from current year)
+  6. Aggregators and third-party listings (use only as signal to search further, never as primary evidence)
 
-If JS says PAST:
-- PASS when the application page OR FAQ shows a NEW future cycle (e.g., "2027 cycle opens September 2026").
-- UNCERTAIN when you couldn't fetch the application/FAQ pages, OR you can't determine from them whether a new cycle exists.
-- FAIL when the application/FAQ page explicitly states no future cycle is planned, or the program is discontinued. A blog post from 2025 saying "our 2025 cycle" is NOT sufficient — that's a historical article, not a statement about the program's future.
+VERDICTS:
+- PASS: You fetched the program's application page (or FAQ) and it shows a current or upcoming open cycle. You can quote specific current-cycle language from a specific URL.
+- FAIL: You fetched the program's application page (or FAQ) and it explicitly states the program is discontinued, on permanent hiatus, or no future cycle is planned. The evidence is from the program's own current pages, not from a historical article.
+- UNCERTAIN: You did thorough research but could not find definitive current-cycle evidence, OR the pages you found contradict each other ambiguously. This is an HONEST uncertain — not a lazy cop-out. State in your concern what you searched, what you fetched, and what remains unclear.
 
-If JS says ROLLING:
-- PASS when the application page or FAQ confirms rolling/continuous intake.
-- UNCERTAIN when you couldn't fetch those pages, or they're ambiguous.
-- FAIL when the application/FAQ page shows an annual deadline (candidate was wrong about rolling).
-
-If JS says UNPARSEABLE:
-- PASS when the application page or FAQ shows a clear future deadline or rolling intake.
-- UNCERTAIN when you couldn't fetch those pages (this is the most common case for unparseable — default here).
-- FAIL when the application/FAQ page shows the program is definitively closed.
+When FAILing, ALWAYS populate the \`failureType\` field with one of: "discontinued" (program has ended), "on-hold" (paused pending funding/restructuring), "past-deadline" (most recent cycle ended with no future cycle). If unsure which, use "past-deadline" as the default.
 
 DEFAULT BIAS: A FAIL verdict tells the user to delete their draft; a false FAIL destroys real work. UNCERTAIN simply asks the user to verify. Require explicit closure language on the program's application or FAQ page before FAILing. If you only looked at one page, or only at blog/news pages, UNCERTAIN.
 
@@ -1855,8 +1865,6 @@ EVIDENCE REQUIREMENTS:
 - Your sourceUrl must be the SPECIFIC page where the evidence lives — not the program's homepage, and not a blog post.
 - If you quote from a blog post or news article as your primary evidence, your verdict MUST be UNCERTAIN, not FAIL.
 - The concern field should state which pages you fetched and what you found/couldn't find.
-
-When FAILing, ALWAYS populate the \`failureType\` field with one of: "discontinued" (program has ended), "on-hold" (paused pending funding/restructuring), "past-deadline" (most recent cycle ended with no future cycle). If unsure which, use "past-deadline" as the default.
 
 GATE 5 — SERVICE-STAGE FIT:
 Does the SERVICE this program offers actually help a project at the "${project.stage}" stage? This is NOT about whether the applicant is eligible — that's stage gate. This is about whether the program's OFFERED HELP matches what a project at this stage actually needs.
@@ -2162,7 +2170,13 @@ Return 0-5 tracks. Quality over quantity. If no sibling tracks fit, return [].`;
     const results = [];
 
     (async () => {
-      const BATCH_SIZE = 5;
+      // Concurrency tuned for thorough research: each verification now makes
+      // multiple search + web_fetch tool calls, so parallel batches of 5 were
+      // blowing through Anthropic rate limits. 2 is conservative but reliable.
+      const BATCH_SIZE = 2;
+      // Inter-batch delay gives the rate-limit window room to breathe.
+      const INTER_BATCH_DELAY_MS = 3000;
+
       for (let i = 0; i < targets.length; i += BATCH_SIZE) {
         if (cancelled) break;
         const batch = targets.slice(i, i + BATCH_SIZE);
@@ -2190,6 +2204,7 @@ Return 0-5 tracks. Quality over quantity. If no sibling tracks fit, return [].`;
               organization: app.oppOrg,
               type: app.oppType,
               url: app.oppUrl,
+              deadline: app.oppDeadline,
               description: (app.content && app.content.requirements && app.content.requirements.summary) || ""
             };
             try {
@@ -2236,6 +2251,12 @@ Return 0-5 tracks. Quality over quantity. If no sibling tracks fit, return [].`;
         sApps(updated);
 
         if (onProgress) onProgress(Math.min(i + BATCH_SIZE, targets.length), targets.length);
+
+        // Pause between batches to avoid hitting rate limits.
+        // Skip the pause after the final batch.
+        if (i + BATCH_SIZE < targets.length && !cancelled) {
+          await new Promise(r => setTimeout(r, INTER_BATCH_DELAY_MS));
+        }
       }
       if (!cancelled && onDone) onDone(results);
     })();
@@ -6438,7 +6459,7 @@ Artistic Statement | 500 words`}</pre>
               marginBottom: "16px"
             }}>
               <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5 }}>
-                ⏱ Estimated time: <strong>~{Math.ceil(auditTargets.length / 5)}-{Math.ceil(auditTargets.length / 5) * 2} minutes</strong> (5 checks run in parallel). Each verification uses web search. Nothing is deleted automatically — you decide what to do with flagged items.
+                ⏱ Estimated time: <strong>~{Math.ceil(auditTargets.length / 2)}-{Math.ceil(auditTargets.length)} minutes</strong> (2 checks run in parallel with a brief pause between batches). Each verification fetches multiple pages on the program's own site for thorough research. Nothing is deleted automatically — you decide what to do with flagged items.
               </p>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
