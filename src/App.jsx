@@ -1417,6 +1417,27 @@ If this project declares an attribute (see Eligibility Attributes above), match 
 🗓 DEADLINE REQUIREMENT (NON-NEGOTIABLE):
 Today is ${todayReadable}. Only return opportunities whose deadline is TODAY OR LATER. If the deadline has already passed, EXCLUDE THE OPPORTUNITY entirely — do not return it even if it would normally be a strong match.
 
+🚨 MANDATORY DATE COMPARISON — FOR EACH CANDIDATE, DO THIS STEP BEFORE INCLUDING IT:
+Before declaring ANY deadline as "past" or including/excluding an opportunity, compute explicitly:
+
+STEP 1: Parse the deadline into MONTH, DAY, YEAR.
+STEP 2: Parse today (${todayReadable}) into MONTH, DAY, YEAR.
+STEP 3: The deadline is in the FUTURE (has NOT passed) if:
+  (deadline year) > (today year), OR
+  (deadline year) == (today year) AND (deadline month) > (today month), OR
+  (deadline year) == (today year) AND (deadline month) == (today month) AND (deadline day) >= (today day)
+
+If any of those three conditions are true, the deadline is valid — INCLUDE the opportunity. Only if all three are false has the deadline actually passed.
+
+WORKED EXAMPLE: Today is April 22, 2026. Deadline is May 12, 2026.
+- Year: 2026 == 2026. Not past on year alone.
+- Month: May (5) > April (4). Deadline is in the FUTURE. Include.
+
+WORKED EXAMPLE: Today is April 22, 2026. Deadline is April 2, 2026.
+- Year: 2026 == 2026.
+- Month: April (4) == April (4).
+- Day: 2 < 22. Deadline HAS PASSED. Exclude (unless future cycle exists).
+
 🚨 TRAINING-DATA STALENESS WARNING:
 Your training data predates today. You may remember programs having 2024 or 2025 deadlines as the "most recent." Those memories are STALE. Annual programs are still running annually — a program that had a 2025 deadline almost certainly has a 2026 deadline now. When searching:
 - Explicitly search for the CURRENT year's cycle (e.g., "Sundance Screenwriters Lab 2026 deadline," "Gotham Week 2026 extended deadline")
@@ -1424,7 +1445,7 @@ Your training data predates today. You may remember programs having 2024 or 2025
 - If you only find older-cycle information, search harder with queries like "[program] current application 2026" or "[program] upcoming deadline"
 - A program being active in 2024/2025 is STRONG evidence it's active now. Do not exclude based on "no 2026 info in my training data" — that's staleness, not evidence of discontinuation
 
-If an opportunity is cyclical and this year's deadline has passed, either find the NEXT cycle's deadline or exclude it if you cannot find any current or future cycle via fresh web search.
+If an opportunity is cyclical and this year's deadline has passed (verified via MANDATORY DATE COMPARISON above), either find the NEXT cycle's deadline or exclude it if you cannot find any current or future cycle via fresh web search.
 
 "Rolling" deadline has a STRICT definition. Only use deadline: "rolling" when the grant explicitly states "applications accepted on a rolling basis," "continuous intake," "year-round submissions," or equivalent language. DO NOT use "rolling" when:
 - The grant has an annual deadline (even if the relationship with awardees spans multiple years)
@@ -1697,16 +1718,39 @@ Does this opportunity have a demographic or thematic eligibility requirement (e.
 GATE 4 — AVAILABILITY:
 Is this opportunity CURRENTLY AVAILABLE for submissions as of ${verifyTodayReadable}? This is a critical check. Candidate discovery sometimes mislabels closed, discontinued, or paused opportunities as active when they're not.
 
-🚨 CRITICAL TRAINING-DATA BIAS WARNING — READ THIS FIRST:
+🚨 MANDATORY DATE COMPARISON — YOU MUST DO THIS STEP EXPLICITLY:
+Before writing the availabilityGate verdict, you MUST perform this three-step calculation in your reasoning (NOT in the output):
+
+STEP 1: Identify the deadline date you found in the guidelines or candidate claim. Parse it into: MONTH, DAY, YEAR.
+STEP 2: State today's date explicitly: Today is ${verifyTodayReadable} (${verifyTodayISO}). Parse today into: MONTH, DAY, YEAR.
+STEP 3: Compare year first, then month, then day. The deadline date is in the FUTURE (has not passed) if:
+  (year of deadline) > (year of today), OR
+  (year of deadline) == (year of today) AND (month of deadline) > (month of today), OR
+  (year of deadline) == (year of today) AND (month of deadline) == (month of today) AND (day of deadline) >= (day of today)
+
+Only if ALL three of those conditions are false has the deadline actually passed.
+
+WORKED EXAMPLE: Today is April 22, 2026. Deadline is May 12, 2026.
+- Year: 2026 vs 2026. Equal.
+- Month: May (5) vs April (4). 5 > 4. Therefore: deadline is in the FUTURE.
+- PASS availability.
+
+COUNTER-EXAMPLE: Today is April 22, 2026. Deadline is April 2, 2026.
+- Year: 2026 vs 2026. Equal.
+- Month: April (4) vs April (4). Equal.
+- Day: 2 vs 22. 2 < 22. Therefore: deadline HAS PASSED.
+- FAIL availability (unless a future cycle is announced).
+
+🚨 TRAINING-DATA BIAS WARNING:
 Your training data likely predates today's date (${verifyTodayReadable}). You may have strong priors from 2024 or 2025 about what the "most recent" cycle of a program was. Those priors are OBSOLETE. A program that had a 2025 deadline almost certainly has a 2026 deadline now — annual programs keep running annually. You MUST use web search to find the CURRENT year's cycle information, and you MUST NOT rely on what you remember from training.
 
 Specifically, if you find yourself concluding "the 2025 cycle has already completed and no 2026 cycle has been announced yet" — STOP. This conclusion is almost always wrong. It reflects training-data staleness, not actual program status. Instead:
 - Search specifically for "[program name] 2026 deadline" or "[program name] current application"
 - Look for news, press releases, or calendar entries from 2026 (today's year)
 - Check the program's official site for the CURRENT open call, not the one you remember
-- If a candidate provided a specific deadline like "May 7, 2026" and that date is in the future, TRUST that as the signal pointing you to the real current cycle — and search to CONFIRM it, not to disprove it
+- If a candidate provided a specific deadline like "May 7, 2026" and that date is in the future (apply the MANDATORY DATE COMPARISON above), TRUST that as the signal pointing you to the real current cycle — and search to CONFIRM it, not to disprove it
 
-ALSO CRITICAL: If the candidate provided a specific deadline (e.g., "${candidateDeadline}") and that date parses to TODAY OR LATER, the default assumption is that this is a current, valid deadline for this cycle. Your job is to verify it, not to contradict it. If you cannot find the deadline on the guidelines page, mark UNCERTAIN, not FAIL. The candidate's date claim is a positive signal; absence of confirmation is not refutation.
+ALSO CRITICAL: If the candidate provided a specific deadline (e.g., "${candidateDeadline}") and that date is TODAY OR LATER (verified via the MANDATORY DATE COMPARISON), the default assumption is that this is a current, valid deadline for this cycle. Your job is to verify it, not to contradict it. If you cannot find the deadline on the guidelines page, mark UNCERTAIN, not FAIL. The candidate's date claim is a positive signal; absence of confirmation is not refutation.
 
 This gate covers THREE distinct ways an opportunity can be unavailable. You must check for all three:
 
