@@ -4201,9 +4201,19 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
   const [outcomeForm, setOutcomeForm] = useState({ outcome: "", notes: "", postMortem: "" });
   const [humanizingKey, setHumanizingKey] = useState(null);
   const [listFilter, setListFilter] = useState("all");
-  // Manual field override — for when user has the actual form field list in hand
-  const [manualOpen, setManualOpen] = useState(false);
+  // Manual field override — for when user has the actual form field list in hand.
+  // manualText holds the pending/current field list as textarea-format string.
+  // When populated (from library auto-load or modal edit), it gets passed to the
+  // generate call so the engine uses these exact fields.
   const [manualText, setManualText] = useState("");
+  // Edit Structure modal (replaces the inline editor)
+  const [structureMdl, setStructureMdl] = useState(null); // holds opp index when open
+  const [structureFile, setStructureFile] = useState(null); // { name, mediaType, data, size }
+  const [structureExtracting, setStructureExtracting] = useState(false);
+  const [structureExtractError, setStructureExtractError] = useState(null);
+  // When set, saving the Edit Structure modal also triggers regenerate on this app.
+  // Used by the "Edit structure & regenerate" flow from the draft detail view.
+  const [structureRegenerateAppId, setStructureRegenerateAppId] = useState(null);
 
   // Parse manual field text into array of { fieldName, wordLimit }
   // Format: one field per line, "Field Name | word limit" (pipe-separated)
@@ -4238,32 +4248,37 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
       .join("\n");
   };
 
-  // Look up the saved library entry for the currently selected opportunity
+  // Look up the saved library entry for the currently selected opportunity.
+  // Read directly from the fieldLibrary prop (not via getFieldsFromLibrary which
+  // reads from a ref) so the UI updates reactively when the library changes.
   const selectedOpp = selO !== null ? opps[selO] : null;
-  const libraryEntry = selectedOpp
-    ? getFieldsFromLibrary(selectedOpp.name, selectedOpp.organization)
-    : null;
+  const libraryEntry = (() => {
+    if (!selectedOpp) return null;
+    const key = ((selectedOpp.name || "").toLowerCase().trim().replace(/\s+/g, " ") +
+                 "|" +
+                 (selectedOpp.organization || "").toLowerCase().trim().replace(/\s+/g, " "));
+    return (fieldLibrary && fieldLibrary[key]) || null;
+  })();
 
-  // When selected opp changes, reset the override textarea. If the new opp has a
-  // saved library entry, auto-populate from it. If not, leave empty.
+  // When selected opp changes, auto-populate manualText from the library entry
+  // (if one exists). This keeps manualText in sync with the known fields for
+  // the selected opportunity, so Generate can use them without requiring the
+  // user to open the Edit Structure modal.
   useEffect(() => {
     if (selO === null) {
       setManualText("");
-      setManualOpen(false);
       return;
     }
     if (libraryEntry && libraryEntry.fields && libraryEntry.fields.length > 0) {
       setManualText(serializeFields(libraryEntry.fields));
-      setManualOpen(true); // expand so the user can see what was loaded
     } else {
       setManualText("");
-      setManualOpen(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selO]);
 
   // Reset opportunity selection when project changes (available list shifts).
-  // The selO-change effect handles clearing manualText/manualOpen.
+  // The selO-change effect handles clearing manualText.
   useEffect(() => {
     setSelO(null);
   }, [selP]);
@@ -4307,14 +4322,10 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
   const generate = () => {
     if (selO === null || !projects[selP]) return;
     const parsed = parseManualFields(manualText);
-    // Use manual fields if the override is open AND there's valid content,
-    // OR if there are fields regardless (library auto-populated even if closed).
+    // If manualText has parsed fields, pass them through as the authoritative
+    // field list. Otherwise let the engine auto-discover.
     const manualFields = parsed.length > 0 ? parsed : [];
     runGenerate(selO, selP, manualFields.length > 0 ? manualFields : undefined);
-    // After firing, reset the selection so selO-triggered useEffect can re-populate
-    // from library for the next opp. Don't clear manualText manually — the selO reset
-    // in another useEffect handles that.
-    setManualOpen(false);
   };
 
   const setCheck = (idx, key, val) => {
@@ -4352,8 +4363,417 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
     setSubmitMdl(null);
   };
 
-  /* ── VIEW APP ── */
-  if (view !== null && apps[view]) {
+  const structureMdlJsx = (
+      <Mdl
+        open={structureMdl !== null}
+        onClose={() => {
+          // Same behavior as Cancel: revert manualText to the library entry (if any)
+          // so abandoned edits don't persist.
+          if (structureMdl !== null && opps[structureMdl]) {
+            const o = opps[structureMdl];
+            const k = ((o.name || "").toLowerCase().trim().replace(/\s+/g, " ") +
+                       "|" +
+                       (o.organization || "").toLowerCase().trim().replace(/\s+/g, " "));
+            const existing = fieldLibrary && fieldLibrary[k];
+            if (existing && existing.fields && existing.fields.length > 0) {
+              setManualText(serializeFields(existing.fields));
+            } else {
+              setManualText("");
+            }
+          }
+          setStructureRegenerateAppId(null);
+          setStructureMdl(null);
+          setStructureFile(null);
+          setStructureExtractError(null);
+          setStructureExtracting(false);
+        }}
+        title={structureMdl !== null && opps[structureMdl]
+          ? "Edit Structure: " + opps[structureMdl].name
+          : "Edit Structure"}
+        width="640px"
+      >
+        {structureMdl !== null && opps[structureMdl] && (() => {
+          const modalOpp = opps[structureMdl];
+          const modalParsed = parseManualFields(manualText);
+          // Read library directly from prop for reactive updates
+          const modalKey = ((modalOpp.name || "").toLowerCase().trim().replace(/\s+/g, " ") +
+                            "|" +
+                            (modalOpp.organization || "").toLowerCase().trim().replace(/\s+/g, " "));
+          const modalExistingLib = (fieldLibrary && fieldLibrary[modalKey]) || null;
+          const modalHasExisting = !!(modalExistingLib && modalExistingLib.fields && modalExistingLib.fields.length > 0);
+
+          // File reader helper
+          const handleFileSelect = async (file) => {
+            if (!file) return;
+            setStructureExtractError(null);
+            // Validate size and type
+            if (file.size > 10 * 1024 * 1024) {
+              setStructureExtractError("File is too large (max 10MB). Compress the image or PDF and try again.");
+              return;
+            }
+            const allowed = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "application/pdf"];
+            if (!allowed.includes(file.type)) {
+              setStructureExtractError("Unsupported file type. Use PNG, JPG, WEBP, GIF, or PDF.");
+              return;
+            }
+            try {
+              const reader = new FileReader();
+              reader.onload = () => {
+                const result = reader.result;
+                const base64 = result.split(",")[1];
+                setStructureFile({
+                  name: file.name,
+                  mediaType: file.type,
+                  size: file.size,
+                  data: base64
+                });
+              };
+              reader.onerror = () => {
+                setStructureExtractError("Failed to read the file. Try again.");
+              };
+              reader.readAsDataURL(file);
+            } catch (err) {
+              setStructureExtractError("Failed to read the file: " + (err.message || "unknown error"));
+            }
+          };
+
+          // Extraction call — sends the file to Claude and asks for fields only
+          const extractFields = async () => {
+            if (!structureFile) return;
+            setStructureExtracting(true);
+            setStructureExtractError(null);
+            try {
+              const extractionPrompt = `You are looking at a screenshot or PDF of an application form for "${modalOpp.name}" at "${modalOpp.organization}".
+
+Your ONLY task is to extract the list of form fields the applicant must fill out. Do not write any content. Do not research the opportunity. Just read the form and list its fields.
+
+For each field you see in the form, extract:
+- The EXACT field name as it appears (e.g. "Logline", "Project Summary", "Artistic Statement")
+- The word or character limit, if specified (e.g. "25 words", "500 characters", "2 pages")
+- If no limit is shown, use "unspecified"
+
+Return ONLY JSON in this exact format, no markdown, no commentary:
+{
+  "fields": [
+    { "fieldName": "...", "wordLimit": "..." },
+    { "fieldName": "...", "wordLimit": "..." }
+  ]
+}
+
+If you cannot see any fields clearly, return: { "fields": [] }
+
+Be thorough — every distinct input the applicant must complete is a field. Include short fields (logline), long fields (synopsis, statement), and numeric/date fields if visible. Do NOT include things that are not user input: instructions, page headers, section dividers, submit buttons.`;
+
+              const content = [
+                { type: "text", text: extractionPrompt }
+              ];
+              if (structureFile.mediaType === "application/pdf") {
+                content.push({
+                  type: "document",
+                  source: { type: "base64", media_type: "application/pdf", data: structureFile.data }
+                });
+              } else {
+                content.push({
+                  type: "image",
+                  source: { type: "base64", media_type: structureFile.mediaType, data: structureFile.data }
+                });
+              }
+
+              const response = await askClaude(content, false);
+              const parsed = extractJSON(response);
+              if (!parsed || !Array.isArray(parsed.fields)) {
+                setStructureExtractError("Couldn't read the file — the AI didn't return valid field data. Try a clearer screenshot or paste the fields manually.");
+                return;
+              }
+              if (parsed.fields.length === 0) {
+                setStructureExtractError("No fields detected in the file. Try a clearer screenshot of the actual form fields, or paste the fields manually.");
+                return;
+              }
+              // Populate textarea with extracted fields (merge into any existing text: replace)
+              setManualText(serializeFields(parsed.fields));
+            } catch (err) {
+              setStructureExtractError("Extraction failed: " + (err.message || "unknown error"));
+            } finally {
+              setStructureExtracting(false);
+            }
+          };
+
+          const handleSave = () => {
+            if (modalParsed.length === 0) return;
+            saveFieldsToLibrary(modalOpp.name, modalOpp.organization, modalParsed, true);
+            // If this modal was opened via "Edit structure & regenerate" from a draft
+            // detail view, trigger regenerate on that app now that the structure is saved.
+            const regenAppId = structureRegenerateAppId;
+            setStructureRegenerateAppId(null);
+            setStructureMdl(null);
+            setStructureFile(null);
+            setStructureExtractError(null);
+            if (regenAppId) {
+              // Pass the fields explicitly so the refresh prompt uses them immediately
+              // (library lookup would also work, but explicit is deterministic).
+              runRefreshApp(regenAppId, "regenerate", modalParsed);
+            }
+          };
+
+          // Cancel: revert manualText to the library state (or empty) so abandoned
+          // edits don't persist into the Generate card or the next modal open.
+          const handleCancel = () => {
+            if (modalHasExisting) {
+              setManualText(serializeFields(modalExistingLib.fields));
+            } else {
+              setManualText("");
+            }
+            setStructureRegenerateAppId(null);
+            setStructureMdl(null);
+            setStructureFile(null);
+            setStructureExtractError(null);
+          };
+
+          const handleClear = () => {
+            if (!modalHasExisting) return;
+            if (confirm("Clear the saved structure for " + modalOpp.name + "? The engine will re-research from scratch next time.")) {
+              deleteFieldLibraryEntry(modalOpp.name, modalOpp.organization);
+              setManualText("");
+              setStructureFile(null);
+              setStructureRegenerateAppId(null);
+              setStructureMdl(null);
+            }
+          };
+
+          return (
+            <div>
+              {structureRegenerateAppId && (
+                <div style={{
+                  padding: "10px 12px",
+                  background: C.tl + "15",
+                  border: "1px solid " + C.tl + "40",
+                  borderRadius: "6px",
+                  marginBottom: "16px",
+                  fontSize: "12px",
+                  color: C.tx,
+                  fontFamily: FN.m
+                }}>
+                  ↻ Edit & regenerate mode — saving the structure will immediately kick off a fresh draft using these fields.
+                </div>
+              )}
+              <p style={{ fontSize: "12px", color: C.tm, lineHeight: 1.6, marginBottom: "20px" }}>
+                Tell the engine exactly what fields this application requires. You can paste the field list directly, or upload a screenshot/PDF of the form and let the engine extract the fields automatically.
+              </p>
+
+              {/* === Section A: Upload === */}
+              <div style={{ marginBottom: "20px" }}>
+                <p style={{ ...LS, marginBottom: "8px" }}>UPLOAD SCREENSHOT OR PDF</p>
+                <p style={{ fontSize: "12px", color: C.tm, marginBottom: "10px", lineHeight: 1.5 }}>
+                  Take a screenshot of the application form (or save it as PDF) and drop it here. The engine will read it and extract the fields.
+                </p>
+
+                {!structureFile && (
+                  <label style={{
+                    display: "inline-block",
+                    padding: "10px 16px",
+                    background: C.bd + "30",
+                    border: "1px dashed " + C.bd,
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                    fontSize: "13px",
+                    fontFamily: FN.m,
+                    color: C.tx,
+                    transition: "all 0.15s"
+                  }}>
+                    📎 Choose file
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,application/pdf"
+                      onChange={e => handleFileSelect(e.target.files?.[0])}
+                      style={{ display: "none" }}
+                    />
+                  </label>
+                )}
+
+                {structureFile && (
+                  <div style={{
+                    padding: "10px 12px",
+                    background: C.bg,
+                    border: "1px solid " + C.bd,
+                    borderRadius: "6px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "10px",
+                    flexWrap: "wrap"
+                  }}>
+                    <div style={{ flex: 1, minWidth: "180px" }}>
+                      <p style={{ fontSize: "13px", color: C.tx, fontFamily: FN.m, marginBottom: "2px" }}>
+                        📄 {structureFile.name}
+                      </p>
+                      <p style={{ fontSize: "11px", color: C.tm }}>
+                        {(structureFile.size / 1024).toFixed(0)} KB · {structureFile.mediaType}
+                      </p>
+                    </div>
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      <Btn
+                        variant="primary"
+                        small
+                        onClick={extractFields}
+                        disabled={structureExtracting}
+                      >
+                        {structureExtracting ? "⏳ Extracting…" : "✨ Extract fields"}
+                      </Btn>
+                      <Btn
+                        variant="ghost"
+                        small
+                        onClick={() => {
+                          setStructureFile(null);
+                          setStructureExtractError(null);
+                        }}
+                        disabled={structureExtracting}
+                      >
+                        Remove
+                      </Btn>
+                    </div>
+                  </div>
+                )}
+
+                {structureExtractError && (
+                  <p style={{
+                    fontSize: "12px",
+                    color: C.dn,
+                    marginTop: "8px",
+                    padding: "8px 10px",
+                    background: C.dn + "12",
+                    border: "1px solid " + C.dn + "40",
+                    borderRadius: "4px"
+                  }}>
+                    {structureExtractError}
+                  </p>
+                )}
+              </div>
+
+              {/* === Divider === */}
+              <div style={{
+                textAlign: "center",
+                margin: "20px 0",
+                position: "relative"
+              }}>
+                <span style={{
+                  fontFamily: FN.m,
+                  fontSize: "11px",
+                  color: C.td,
+                  letterSpacing: "0.08em",
+                  background: C.sf,
+                  padding: "0 12px",
+                  position: "relative",
+                  zIndex: 1
+                }}>OR PASTE DIRECTLY</span>
+                <div style={{
+                  position: "absolute",
+                  top: "50%",
+                  left: 0,
+                  right: 0,
+                  height: "1px",
+                  background: C.bd,
+                  zIndex: 0
+                }} />
+              </div>
+
+              {/* === Section B: Paste === */}
+              <div style={{ marginBottom: "16px" }}>
+                <p style={{ ...LS, marginBottom: "8px" }}>FIELD LIST</p>
+                <p style={{ fontSize: "12px", color: C.tm, marginBottom: "8px", lineHeight: 1.5 }}>
+                  One field per line. Format: <code style={{ fontFamily: FN.m, background: C.bd + "30", padding: "1px 5px", borderRadius: "3px", color: C.tx }}>Field Name | word limit</code>. Lines without a pipe treat the whole line as the field name.
+                </p>
+                <details style={{ marginBottom: "10px" }}>
+                  <summary style={{ fontSize: "11px", color: C.tm, cursor: "pointer", fontFamily: FN.m }}>
+                    Show example
+                  </summary>
+                  <pre style={{
+                    fontSize: "11px",
+                    color: C.tm,
+                    fontFamily: FN.m,
+                    background: C.bd + "15",
+                    padding: "8px 10px",
+                    borderRadius: "4px",
+                    marginTop: "6px",
+                    whiteSpace: "pre-wrap"
+                  }}>{`Logline | 25 words
+Synopsis | 60 words
+Summary | 500 words
+Artistic Statement | 500 words`}</pre>
+                </details>
+                <textarea
+                  value={manualText}
+                  onChange={e => setManualText(e.target.value)}
+                  placeholder="Logline | 25 words&#10;Synopsis | 60 words&#10;Artistic Statement | 500 words"
+                  rows={10}
+                  style={{
+                    width: "100%",
+                    fontFamily: FN.m,
+                    fontSize: "13px",
+                    padding: "10px 12px",
+                    border: "1px solid " + C.bd,
+                    borderRadius: "4px",
+                    background: C.bg,
+                    color: C.tx,
+                    resize: "vertical"
+                  }}
+                />
+                <div style={{ marginTop: "8px", minHeight: "18px" }}>
+                  {modalParsed.length > 0 && (
+                    <p style={{ fontSize: "12px", color: C.ac, fontFamily: FN.m }}>
+                      ✓ {modalParsed.length} field{modalParsed.length === 1 ? "" : "s"} detected
+                    </p>
+                  )}
+                  {manualText.trim() && modalParsed.length === 0 && (
+                    <p style={{ fontSize: "12px", color: C.wn, fontFamily: FN.m }}>
+                      ⚠ No fields detected — check the format
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* === Footer actions === */}
+              <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "10px",
+                flexWrap: "wrap",
+                paddingTop: "12px",
+                borderTop: "1px solid " + C.bd
+              }}>
+                <div>
+                  {modalHasExisting && (
+                    <Btn variant="ghost" small onClick={handleClear}>
+                      🗑 Clear saved structure
+                    </Btn>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <Btn
+                    variant="secondary"
+                    onClick={handleCancel}
+                  >
+                    Cancel
+                  </Btn>
+                  <Btn
+                    variant="primary"
+                    onClick={handleSave}
+                    disabled={modalParsed.length === 0}
+                  >
+                    {structureRegenerateAppId
+                      ? "💾 Save & Regenerate"
+                      : (modalHasExisting ? "💾 Save changes" : "💾 Save structure")}
+                  </Btn>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+      </Mdl>
+  );
+
+  /* ── VIEW APP (detail view rendered inline, not early-returned) ── */
+  const detailView = (view !== null && apps[view]) ? (() => {
     const app = apps[view];
     const c = app.content || {};
     // Standard section metadata
@@ -4620,33 +5040,102 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
           </div>
         </Card>
 
+        {/* TOOLS — always visible on non-submitted apps */}
+        {app.status !== "submitted" && (
+          <Card style={{
+            marginBottom: "12px",
+            background: C.bg,
+            borderColor: C.bd
+          }}>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "14px",
+              flexWrap: "wrap"
+            }}>
+              <div style={{ flex: 1, minWidth: "220px" }}>
+                <p style={{
+                  fontFamily: FN.m,
+                  fontSize: "11px",
+                  color: C.td,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                  marginBottom: "4px"
+                }}>Tools</p>
+                <p style={{ fontSize: "12px", color: C.tm, lineHeight: 1.5 }}>
+                  Rework this draft. Refresh pulls in the latest project intelligence; Edit structure lets you correct the field list (paste or screenshot) and regenerate against it.
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <Btn
+                  variant="teal"
+                  small
+                  onClick={() => setRefreshMdl(view)}
+                  disabled={isRefreshing(app.id)}
+                >
+                  {isRefreshing(app.id) ? "🔄 Refreshing..." : "🔄 Refresh / Regenerate"}
+                </Btn>
+                <Btn
+                  variant="secondary"
+                  small
+                  onClick={() => {
+                    // Find this app's opportunity in the opps array
+                    const oppIdx = opps.findIndex(o =>
+                      o.name === app.oppName && o.organization === app.oppOrg
+                    );
+                    if (oppIdx === -1) {
+                      alert("Couldn't find this opportunity in your saved list — it may have been removed. Re-save it in the Discover tab first.");
+                      return;
+                    }
+                    // Pre-populate manualText from library (if any)
+                    const o = opps[oppIdx];
+                    const k = ((o.name || "").toLowerCase().trim().replace(/\s+/g, " ") +
+                               "|" +
+                               (o.organization || "").toLowerCase().trim().replace(/\s+/g, " "));
+                    const existing = fieldLibrary && fieldLibrary[k];
+                    if (existing && existing.fields && existing.fields.length > 0) {
+                      setManualText(serializeFields(existing.fields));
+                    } else {
+                      // Seed from the app's existing formFieldsFound if available
+                      if (Array.isArray(c.formFieldsFound) && c.formFieldsFound.length > 0) {
+                        setManualText(serializeFields(c.formFieldsFound));
+                      } else {
+                        setManualText("");
+                      }
+                    }
+                    // Mark intent to regenerate after save
+                    setStructureRegenerateAppId(app.id);
+                    setStructureFile(null);
+                    setStructureExtractError(null);
+                    setStructureExtracting(false);
+                    setStructureMdl(oppIdx);
+                  }}
+                  disabled={isRefreshing(app.id)}
+                >
+                  ✎ Edit structure & regenerate
+                </Btn>
+              </div>
+            </div>
+          </Card>
+        )}
+
         {isStale(app) && (
           <Card style={{
             marginBottom: "12px",
             borderColor: C.wn + "50",
             background: C.wn + "08"
           }}>
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: "16px",
-              flexWrap: "wrap"
-            }}>
-              <div style={{ flex: 1, minWidth: "240px" }}>
-                <p style={{ fontSize: "14px", fontWeight: 600, marginBottom: "4px" }}>
-                  ⚠ Stale — project has been re-analyzed
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ fontSize: "16px" }}>⚠</span>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: "13px", fontWeight: 600, marginBottom: "2px" }}>
+                  Project has been re-analyzed since this draft was created
                 </p>
                 <p style={{ fontSize: "12px", color: C.tm, lineHeight: 1.5 }}>
-                  The project intelligence has been updated since this application was created. You can refresh the draft to incorporate the new information.
+                  Use Refresh above to integrate the updated project intelligence into this draft.
                 </p>
               </div>
-              <Btn
-                variant="teal"
-                small
-                onClick={() => setRefreshMdl(view)}
-                disabled={isRefreshing(app.id)}
-              >{isRefreshing(app.id) ? "🔄 Refreshing..." : "🔄 Refresh"}</Btn>
             </div>
           </Card>
         )}
@@ -5844,6 +6333,17 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
         </Mdl>
       </div>
     );
+  })() : null;
+  // If in detail view, return it directly (Edit Structure modal follows in main return).
+  // To render the modal from detail view, we include it here inline.
+  if (detailView) {
+    return (
+      <>
+        {detailView}
+        {/* Shared Edit Structure modal — rendered here so it works from detail view too */}
+        {structureMdlJsx}
+      </>
+    );
   }
   return (
     <div>
@@ -5937,143 +6437,119 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
             </select>
           </div>
         </div>
-        {/* Manual field override + Library integration */}
+        {/* APPLICATION STRUCTURE PANEL — always visible, shows what fields the engine will use */}
         {(() => {
           const parsed = parseManualFields(manualText);
-          const hasLibrary = !!libraryEntry;
-          const libraryCount = hasLibrary ? libraryEntry.fields.length : 0;
-          const libraryVerified = hasLibrary && libraryEntry.verified;
-          // Detect when textarea has been edited away from what's in the library
-          const librarySerialized = hasLibrary ? serializeFields(libraryEntry.fields) : "";
-          const hasUnsavedEdits = hasLibrary && manualText.trim() !== "" && manualText !== librarySerialized;
+          const hasFields = !!libraryEntry && libraryEntry.fields && libraryEntry.fields.length > 0;
+          const fieldCount = hasFields ? libraryEntry.fields.length : 0;
+          const librarySerialized = hasFields ? serializeFields(libraryEntry.fields) : "";
+          const hasEdits = hasFields && manualText.trim() !== "" && manualText !== librarySerialized;
+
+          // Format "last checked" date
+          let lastCheckedLabel = "";
+          if (hasFields && libraryEntry.savedAt) {
+            const d = new Date(libraryEntry.savedAt);
+            const daysAgo = Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
+            if (daysAgo === 0) lastCheckedLabel = "today";
+            else if (daysAgo === 1) lastCheckedLabel = "yesterday";
+            else if (daysAgo < 30) lastCheckedLabel = daysAgo + " days ago";
+            else if (daysAgo < 365) lastCheckedLabel = Math.floor(daysAgo / 30) + " months ago";
+            else lastCheckedLabel = Math.floor(daysAgo / 365) + " year" + (daysAgo >= 730 ? "s" : "") + " ago";
+          }
+          const stale = hasFields && libraryEntry.savedAt &&
+            (Date.now() - new Date(libraryEntry.savedAt).getTime()) > (1000 * 60 * 60 * 24 * 180); // 180 days
+
           return (
-            <div style={{ marginBottom: "14px" }}>
-              {/* Library status banner shown when an opp with a saved field list is selected */}
-              {hasLibrary && (
+            <div style={{
+              marginBottom: "14px",
+              padding: "14px 16px",
+              background: C.bg,
+              border: "1px solid " + C.bd,
+              borderRadius: "8px"
+            }}>
+              {/* Panel header */}
+              <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                marginBottom: "10px",
+                gap: "12px",
+                flexWrap: "wrap"
+              }}>
+                <div style={{ flex: 1, minWidth: "200px" }}>
+                  <p style={{
+                    fontFamily: FN.m,
+                    fontSize: "11px",
+                    color: C.td,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    marginBottom: "4px"
+                  }}>Application Structure</p>
+                  <p style={{ fontSize: "12px", color: C.tm, lineHeight: 1.5 }}>
+                    {selO === null
+                      ? "Select an opportunity to see what fields the engine will generate."
+                      : hasFields
+                        ? `${fieldCount} field${fieldCount === 1 ? "" : "s"} known for this opportunity · last checked ${lastCheckedLabel}`
+                        : "The engine will research this opportunity's form when you Generate. If research can't find the form (e.g. login-required), you can paste the fields or upload a screenshot to ensure accuracy."}
+                  </p>
+                </div>
+                {selO !== null && (
+                  <Btn
+                    variant="secondary"
+                    small
+                    onClick={() => {
+                      // Open modal with current fields (from library or existing text) pre-loaded
+                      setStructureFile(null);
+                      setStructureExtractError(null);
+                      setStructureExtracting(false);
+                      // Pre-populate textarea from library if available
+                      if (libraryEntry && libraryEntry.fields && libraryEntry.fields.length > 0) {
+                        setManualText(serializeFields(libraryEntry.fields));
+                      } else {
+                        setManualText("");
+                      }
+                      setStructureMdl(selO);
+                    }}
+                  >
+                    {hasFields ? "✎ Edit structure" : "✎ Set structure manually"}
+                  </Btn>
+                )}
+              </div>
+
+              {/* Staleness warning — opportunities change year over year */}
+              {stale && (
                 <div style={{
-                  marginBottom: "10px",
                   padding: "8px 10px",
-                  background: (hasUnsavedEdits ? C.wn : (libraryVerified ? C.ac : C.wn)) + "15",
-                  border: "1px solid " + (hasUnsavedEdits ? C.wn : (libraryVerified ? C.ac : C.wn)) + "40",
+                  background: C.wn + "12",
+                  border: "1px solid " + C.wn + "30",
                   borderRadius: "4px",
                   fontSize: "12px",
-                  fontFamily: FN.m,
-                  color: C.tx
+                  color: C.tx,
+                  marginBottom: "10px"
                 }}>
-                  {hasUnsavedEdits ? (
-                    <>
-                      ✎ Field list edited — differs from library.
-                      <span style={{ color: C.tm, marginLeft: "6px" }}>Save below to update the saved version.</span>
-                    </>
-                  ) : (
-                    <>
-                      {libraryVerified ? "✓" : "⚠"} {libraryCount} saved field{libraryCount === 1 ? "" : "s"} loaded from library
-                      {libraryVerified
-                        ? " — verified, will be used automatically"
-                        : " — unverified (discovered by AI), review before generating"}
-                      <span style={{ marginLeft: "8px", color: C.tm, fontSize: "11px" }}>
-                        saved {new Date(libraryEntry.savedAt).toLocaleDateString()}
-                      </span>
-                    </>
-                  )}
+                  ⚠ This structure was last checked {lastCheckedLabel}. Opportunities often change their forms year-over-year — consider editing to verify before generating.
                 </div>
               )}
-              <button
-                onClick={() => setManualOpen(!manualOpen)}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: C.tm,
-                  cursor: "pointer",
-                  padding: 0,
-                  fontSize: "12px",
-                  fontFamily: FN.m,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px"
-                }}
-                type="button"
-              >
-                <span style={{ fontSize: "10px" }}>{manualOpen ? "▼" : "▶"}</span>
-                {hasLibrary ? "Review or edit the field list" : "I have the field list (optional — skips field-discovery research)"}
-                {!manualOpen && parsed.length > 0 && !hasLibrary && (
-                  <span style={{ color: C.ac, marginLeft: "4px" }}>· {parsed.length} field{parsed.length === 1 ? "" : "s"} ready</span>
-                )}
-              </button>
-              {manualOpen && (
-                <div style={{ marginTop: "10px" }}>
-                  <p style={{ fontSize: "11px", color: C.tm, marginBottom: "6px", lineHeight: 1.5 }}>
-                    One field per line. Format: <code style={{ fontFamily: FN.m, background: C.bd + "20", padding: "1px 4px", borderRadius: "3px" }}>Field Name | word limit</code>. Lines without a pipe treat the whole line as the field name. Example:
-                  </p>
-                  <pre style={{
-                    fontSize: "11px",
-                    color: C.tm,
-                    fontFamily: FN.m,
-                    background: C.bd + "15",
-                    padding: "8px 10px",
-                    borderRadius: "4px",
-                    marginBottom: "8px",
-                    whiteSpace: "pre-wrap"
-                  }}>{`Logline | 25 words
-Synopsis | 60 words
-Summary | 500 words
-Artistic Statement | 500 words`}</pre>
-                  <textarea
-                    value={manualText}
-                    onChange={e => setManualText(e.target.value)}
-                    placeholder="Logline | 25 words&#10;Synopsis | 60 words&#10;..."
-                    rows={6}
-                    style={{
-                      width: "100%",
+
+              {/* Known fields display (compact) */}
+              {hasFields && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  {libraryEntry.fields.map((f, i) => (
+                    <span key={i} style={{
+                      fontSize: "11px",
                       fontFamily: FN.m,
-                      fontSize: "12px",
-                      padding: "8px 10px",
-                      border: "1px solid " + C.bd + "40",
-                      borderRadius: "4px",
-                      background: C.bd + "08",
-                      color: C.tx,
-                      resize: "vertical"
-                    }}
-                  />
-                  {parsed.length > 0 && (
-                    <p style={{ fontSize: "11px", color: C.ac, marginTop: "6px" }}>
-                      ✓ {parsed.length} field{parsed.length === 1 ? "" : "s"} parsed. The engine will generate content for each and skip auto-discovery.
-                    </p>
-                  )}
-                  {manualText.trim() && parsed.length === 0 && (
-                    <p style={{ fontSize: "11px", color: C.wn, marginTop: "6px" }}>
-                      ⚠ No valid fields parsed. Check the format — one field per line.
-                    </p>
-                  )}
-                  {/* Save / verify controls when text is present and matches a selected opp */}
-                  {selectedOpp && parsed.length > 0 && (
-                    <div style={{ marginTop: "10px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                      <Btn
-                        variant="secondary"
-                        small
-                        onClick={() => {
-                          saveFieldsToLibrary(selectedOpp.name, selectedOpp.organization, parsed, true);
-                        }}
-                      >
-                        {hasLibrary ? "💾 Update library (verified)" : "💾 Save to library (verified)"}
-                      </Btn>
-                      {hasLibrary && (
-                        <Btn
-                          variant="ghost"
-                          small
-                          onClick={() => {
-                            if (confirm("Remove " + selectedOpp.name + " from the field library?")) {
-                              deleteFieldLibraryEntry(selectedOpp.name, selectedOpp.organization);
-                              setManualText("");
-                              setManualOpen(false);
-                            }
-                          }}
-                        >
-                          🗑 Remove from library
-                        </Btn>
+                      padding: "3px 8px",
+                      background: C.bd + "30",
+                      border: "1px solid " + C.bd,
+                      borderRadius: "3px",
+                      color: C.tx
+                    }}>
+                      {f.fieldName}
+                      {f.wordLimit && f.wordLimit !== "unspecified" && (
+                        <span style={{ color: C.tm, marginLeft: "4px" }}>· {f.wordLimit}</span>
                       )}
-                    </div>
-                  )}
+                    </span>
+                  ))}
                 </div>
               )}
             </div>
@@ -6285,6 +6761,8 @@ Artistic Statement | 500 words`}</pre>
           })()}
         </div>
       )}
+
+      {structureMdlJsx}
     </div>
   );
 }
