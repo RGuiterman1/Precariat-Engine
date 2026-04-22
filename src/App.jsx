@@ -90,6 +90,21 @@ const SCRIPT_STATUS_OPTIONS = [
   { key: "locked",      label: "Locked shooting script" }
 ];
 
+// Project categories — optional per project. Signals to the Engine during
+// discovery that this project should be matched with opportunities favoring
+// these categories. Unlike eligibility attributes (which are hard filters at
+// verification time), categories are preferences/priors that inform ranking
+// and opportunity selection. Multi-select per project.
+const PROJECT_CATEGORIES = [
+  { key: "ai-innovation",    label: "AI / tech innovation",          description: "Uses AI, custom pipelines, or technical innovation — prioritize tech-forward grants and innovation labs" },
+  { key: "animation",        label: "Animation",                      description: "Animated or partially animated — prioritize animation-specific festivals, grants, and labs" },
+  { key: "documentary",      label: "Documentary / non-fiction",      description: "Documentary form — prioritize doc-specific funds (ITVS, Sundance Doc, IDA, etc.)" },
+  { key: "experimental",     label: "Experimental / avant-garde",     description: "Experimental form — prioritize experimental film programs, Creative Capital, Creative Time, etc." },
+  { key: "co-production",    label: "International co-production",    description: "International co-pro structure — prioritize co-production funds and bilateral treaty programs" },
+  { key: "first-time",       label: "First-time filmmaker",           description: "First-time feature director or creative team — prioritize emerging-filmmaker programs" },
+  { key: "micro-budget",     label: "Low / micro-budget",             description: "Sub-$500K or micro-budget production — prioritize programs designed for this budget tier" }
+];
+
 // VOICE DIRECTIVE — condensed from Ryan Guiterman's Voice Profile v1.1.
 // Injected into every Generate/Regenerate/Augment prompt when the user
 // has voice mode enabled (default: on). The full Voice Profile lives in
@@ -1213,6 +1228,13 @@ function AppMain() {
       const an_attrsLine = an_attrLabels.length > 0
         ? `\nDeclared Eligibility Attributes: ${an_attrLabels.join(", ")}`
         : "";
+      const an_catLabels = (p.projectCategories || [])
+        .map(k => PROJECT_CATEGORIES.find(c => c.key === k))
+        .filter(Boolean)
+        .map(c => c.label);
+      const an_catsLine = an_catLabels.length > 0
+        ? `\nProject Categories: ${an_catLabels.join(", ")}`
+        : "";
 
       const textPrompt = `You are a world-class film strategist who has programmed Sundance, Cannes, and advised A24. Your analysis leaves NO stone unturned — you deeply research every person attached to a project because even a single collaborator's credentials can unlock entire tiers of grants, labs, and festivals.
 
@@ -1235,7 +1257,9 @@ Budget: ${p.budget || "Not specified"}
 Runtime: ${p.runtime || "Not specified"}
 Target Audience: ${p.targetAudience || "Not specified"}
 Themes: ${p.themes || "Not specified"}
-Team Notes: ${p.teamNotes || "Not specified"}${an_attrsLine}
+Team Notes: ${p.teamNotes || "Not specified"}${an_attrsLine}${an_catsLine}
+
+${an_catLabels.length > 0 ? "🏷 PROJECT CATEGORIES — FACTOR INTO ANALYSIS: The project identifies as " + an_catLabels.join(", ") + ". Your analysis should emphasize opportunities, funding sources, and strategic pathways that favor these categories. If the project is AI/tech-innovation, foreground tech-forward grants, innovation labs, and programs that embrace AI in cinema. If animation, foreground animation-specific ecosystems. If documentary, foreground doc funds. Etc.\n" : ""}
 
 ${projectFiles.length > 0 ? "ATTACHED MATERIALS (review carefully for deep analysis):\n" + projectFiles.map(f => "- " + f.name + " (" + f.category + ")").join("\n") + "\n\nUse attached materials as the PRIMARY source. Reference specific scenes, visuals, or content from them.\n" : ""}
 
@@ -1455,6 +1479,18 @@ Be brutally specific to THIS project and THIS team only. No generic advice. Rese
       ? `Eligibility Attributes: ${p_attrs.join(", ")}`
       : "";
 
+    // Project categories — soft signals to the discovery engine about what
+    // kinds of opportunities to prioritize. These are preferences, not filters.
+    const p_cats = (p.projectCategories || [])
+      .map(k => PROJECT_CATEGORIES.find(c => c.key === k))
+      .filter(Boolean);
+    const p_catsLine = p_cats.length > 0
+      ? `Project Categories: ${p_cats.map(c => c.label).join(", ")}`
+      : "";
+    const p_catsGuidance = p_cats.length > 0
+      ? `\n\n🏷 PROJECT CATEGORY GUIDANCE — PRIORITIZE OPPORTUNITIES FAVORING THESE:\n${p_cats.map(c => `• ${c.label}: ${c.description}`).join("\n")}\n\nThese are prioritization signals, not hard filters. An opportunity that doesn't explicitly match still counts if it's a good fit, but opportunities that EXPLICITLY favor or specialize in these categories should be ranked higher and surfaced first.`
+      : "";
+
     const prompt = `You are an expert film industry researcher. Search for REAL, currently open or upcoming ${tf} for this project. Your job is to find opportunities where this SPECIFIC team's credentials give the highest probability of success.
 
 📅 TODAY'S DATE: ${todayReadable} (${todayISO})
@@ -1465,8 +1501,8 @@ Format: ${p.format}
 Genre: ${p.genre || "?"}
 Stage: ${p.stage}${p_scriptStatusLine ? "\n" + p_scriptStatusLine : ""}
 Logline: ${p.logline || "?"}
-Themes: ${p.themes || "?"}${p_attrsLine ? "\n" + p_attrsLine : ""}
-Team Notes: ${p.teamNotes || "?"}${analysisContext}${teamContext}${exclusionContext}${rejectionContext}
+Themes: ${p.themes || "?"}${p_attrsLine ? "\n" + p_attrsLine : ""}${p_catsLine ? "\n" + p_catsLine : ""}
+Team Notes: ${p.teamNotes || "?"}${analysisContext}${teamContext}${exclusionContext}${rejectionContext}${p_catsGuidance}
 ${query && query.trim() ? "\nAdditional focus: " + query : ""}
 
 🚨 CRITICAL STAGE REQUIREMENT (NON-NEGOTIABLE):
@@ -1682,6 +1718,17 @@ Find 12-18 real opportunities with CURRENT, FUTURE deadlines. The verification p
       ? "PROJECT'S ELIGIBILITY ATTRIBUTES (filmmaker has declared these apply):\n" + attrLabels.map(l => "- " + l).join("\n")
       : "PROJECT'S ELIGIBILITY ATTRIBUTES: (none declared by user — filmmaker hasn't checked any attributes in project settings)";
 
+    // Project categories — informational context for the verification model.
+    // Categories don't gate verification (they're preferences, not hard eligibility
+    // requirements), but they help the model understand the project better.
+    const verif_catLabels = (project.projectCategories || [])
+      .map(k => PROJECT_CATEGORIES.find(c => c.key === k))
+      .filter(Boolean)
+      .map(c => c.label);
+    const catSection = verif_catLabels.length > 0
+      ? "PROJECT CATEGORIES (filmmaker has declared the project fits these categories):\n" + verif_catLabels.map(l => "- " + l).join("\n")
+      : "";
+
     const scriptStatusLabel = (SCRIPT_STATUS_OPTIONS.find(o => o.key === project.scriptStatus) || {}).label || null;
     const scriptStatusLine = scriptStatusLabel
       ? `Script Status: ${scriptStatusLabel}`
@@ -1731,7 +1778,7 @@ Genre: ${project.genre || "unspecified"}
 Logline: ${project.logline || "?"}
 Themes: ${project.themes || "?"}
 ${attrSection}
-
+${catSection ? catSection + "\n" : ""}
 ═══════════════════════════════════════════
 🚨 CRITICAL TERMINOLOGY GUIDANCE — READ BEFORE EVALUATING
 ═══════════════════════════════════════════
@@ -2113,6 +2160,13 @@ overallVerdict rules:
     const sib_attrsLine = sib_attrs.length > 0
       ? `Eligibility Attributes: ${sib_attrs.join(", ")}`
       : "";
+    const sib_cats = (project.projectCategories || [])
+      .map(k => PROJECT_CATEGORIES.find(c => c.key === k))
+      .filter(Boolean)
+      .map(c => c.label);
+    const sib_catsLine = sib_cats.length > 0
+      ? `Project Categories: ${sib_cats.join(", ")}`
+      : "";
 
     const prompt = `You are helping a filmmaker find the RIGHT track at an organization where they picked the wrong one.
 
@@ -2131,7 +2185,7 @@ Stage: ${project.stage}${sib_scriptStatusLine ? "\n" + sib_scriptStatusLine : ""
 Format: ${project.format}
 Genre: ${project.genre || "unspecified"}
 Logline: ${project.logline || "?"}
-Themes: ${project.themes || "?"}${sib_attrsLine ? "\n" + sib_attrsLine : ""}
+Themes: ${project.themes || "?"}${sib_attrsLine ? "\n" + sib_attrsLine : ""}${sib_catsLine ? "\n" + sib_catsLine : ""}
 
 📅 TODAY'S DATE: ${todayReadable}
 
@@ -2420,6 +2474,13 @@ Return 0-5 tracks. Quality over quantity. If no sibling tracks fit, return [].`;
       const gen_attrsLine = gen_attrLabels.length > 0
         ? `\n• Eligibility Attributes: ${gen_attrLabels.join(", ")}`
         : "";
+      const gen_catLabels = (p.projectCategories || [])
+        .map(k => PROJECT_CATEGORIES.find(c => c.key === k))
+        .filter(Boolean)
+        .map(c => c.label);
+      const gen_catsLine = gen_catLabels.length > 0
+        ? `\n• Project Categories: ${gen_catLabels.join(", ")}`
+        : "";
 
       // Voice directive — inject if profile has it enabled
       const gen_voiceBlock = (prof.voiceDirectiveEnabled !== false) ? ("\n\n" + VOICE_DIRECTIVE + "\n") : "";
@@ -2466,7 +2527,7 @@ PROJECT
 • Title: "${p.title}"
 • Format: ${p.format}
 • Genre: ${p.genre || "?"}
-• Stage: ${p.stage}${gen_scriptStatusLine}${gen_attrsLine}
+• Stage: ${p.stage}${gen_scriptStatusLine}${gen_attrsLine}${gen_catsLine}
 • Logline: ${p.logline || "?"}
 • Synopsis: ${p.synopsis || "?"}
 • Themes: ${p.themes || "?"}
@@ -2477,6 +2538,8 @@ ${gen_scriptStatusLabel ? `📝 IMPORTANT — SCRIPT STATUS CONTEXT:
 The screenplay is "${gen_scriptStatusLabel}". When writing about the project's readiness, use this to your advantage — "Development" stage does NOT mean the script is incomplete. Speak about the screenplay accurately: if polished or locked, describe it as a completed work ready for the next phase. If in progress, describe the creative direction and work remaining. Do NOT default to vague "in development" language that could undersell a finished script.
 ` : ""}${gen_attrLabels.length > 0 ? `🌟 IMPORTANT — TEAM & THEMATIC ATTRIBUTES:
 This project has the following declared eligibility attributes: ${gen_attrLabels.join(", ")}. When the opportunity you're writing for aligns with these attributes (e.g., applying to a Jewish film grant when the team/themes are Jewish, or a women-led grant when the project is women-led), FOREGROUND these authentically in the application. Do not manufacture claims that aren't declared — but do use what IS declared to its full advantage.
+` : ""}${gen_catLabels.length > 0 ? `🏷 IMPORTANT — PROJECT CATEGORIES:
+This project has declared categories: ${gen_catLabels.join(", ")}. When writing for an opportunity that favors or specializes in these categories, LEAD with them. If this is an AI/tech-innovation project and the opportunity favors tech-forward work, the AI/tech dimension should be prominent — not buried. If it's animation, foreground the animation identity. If documentary, foreground the doc form. These categories are the project's identity, not optional context.
 ` : ""}
 ${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review the attached files (screenplay, pitch deck, look book, etc.) carefully. Reference SPECIFIC scenes, visuals, characters, or moments from them — not vague summaries. This specificity is what separates winning applications from generic ones." : ""}
 
@@ -2792,8 +2855,15 @@ No generic language. No boilerplate. Only write what's actually asked for. Every
       const ref_attrsLine = ref_attrLabels.length > 0
         ? `\n• Eligibility Attributes: ${ref_attrLabels.join(", ")}`
         : "";
-      const ref_attributeGuidance = (ref_scriptStatusLabel || ref_attrLabels.length > 0)
-        ? `\n${ref_scriptStatusLabel ? `📝 Script Status "${ref_scriptStatusLabel}" — a completed/polished script is READY for labs/competitions, don't undersell with vague "in development" language.\n` : ""}${ref_attrLabels.length > 0 ? `🌟 Declared attributes: ${ref_attrLabels.join(", ")}. Foreground these authentically when the opportunity aligns.\n` : ""}`
+      const ref_catLabels = (p.projectCategories || [])
+        .map(k => PROJECT_CATEGORIES.find(c => c.key === k))
+        .filter(Boolean)
+        .map(c => c.label);
+      const ref_catsLine = ref_catLabels.length > 0
+        ? `\n• Project Categories: ${ref_catLabels.join(", ")}`
+        : "";
+      const ref_attributeGuidance = (ref_scriptStatusLabel || ref_attrLabels.length > 0 || ref_catLabels.length > 0)
+        ? `\n${ref_scriptStatusLabel ? `📝 Script Status "${ref_scriptStatusLabel}" — a completed/polished script is READY for labs/competitions, don't undersell with vague "in development" language.\n` : ""}${ref_attrLabels.length > 0 ? `🌟 Declared attributes: ${ref_attrLabels.join(", ")}. Foreground these authentically when the opportunity aligns.\n` : ""}${ref_catLabels.length > 0 ? `🏷 Project categories: ${ref_catLabels.join(", ")}. When the opportunity favors or specializes in these categories (e.g., AI/tech innovation, animation, documentary), LEAD with them — these define the project's identity.\n` : ""}`
         : "";
 
       // Voice directive — inject if profile has it enabled
@@ -2840,7 +2910,7 @@ PROJECT
 • Title: "${p.title}"
 • Format: ${p.format}
 • Genre: ${p.genre || "?"}
-• Stage: ${p.stage}${ref_scriptStatusLine}${ref_attrsLine}
+• Stage: ${p.stage}${ref_scriptStatusLine}${ref_attrsLine}${ref_catsLine}
 • Logline: ${p.logline || "?"}
 • Synopsis: ${p.synopsis || "?"}
 • Themes: ${p.themes || "?"}
@@ -2935,7 +3005,7 @@ If the existing draft has different contact info or uses placeholders, CORRECT I
 
 PROJECT (LATEST VERSION)
 • Title: "${p.title}"
-• Format: ${p.format} · Genre: ${p.genre || "?"} · Stage: ${p.stage}${ref_scriptStatusLine}${ref_attrsLine}
+• Format: ${p.format} · Genre: ${p.genre || "?"} · Stage: ${p.stage}${ref_scriptStatusLine}${ref_attrsLine}${ref_catsLine}
 • Logline: ${p.logline || "?"}
 • Synopsis: ${p.synopsis || "?"}
 • Themes: ${p.themes || "?"}
@@ -3884,7 +3954,8 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
     targetAudience: "",
     themes: "",
     teamNotes: "",
-    eligibilityAttributes: []  // array of stable keys like "bipoc-team", "jewish-themes", etc.
+    eligibilityAttributes: [], // array of stable keys like "bipoc-team", "jewish-themes", etc.
+    projectCategories: []      // array of stable keys like "ai-innovation", "animation", etc.
   };
 
   const [form, setForm] = useState(emptyForm);
@@ -3896,7 +3967,9 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
       setFiles([]);
       setEdit("new");
     } else {
-      setForm({ ...projects[idx] });
+      // Merge stored project onto emptyForm so legacy projects (saved before
+      // new fields existed) have the fields defaulted rather than undefined.
+      setForm({ ...emptyForm, ...projects[idx] });
       const loaded = await loadProjectFiles(projects[idx].id);
       setFiles(loaded);
       setEdit(idx);
@@ -4481,6 +4554,80 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
                 );
               })()}
             </div>
+
+            {/* Project Categories — soft signals to the discovery engine about what kinds of opportunities to prioritize */}
+            <div style={{ gridColumn: "1 / -1", marginTop: "4px" }}>
+              <label style={LS}>Project Categories (Optional)</label>
+              <p style={{ fontSize: "11px", color: C.tm, lineHeight: 1.5, marginBottom: "10px" }}>
+                Signals to the Engine about the nature of this project so discovery prioritizes relevant opportunities. For example, "AI / tech innovation" steers the Engine toward grants favoring AI use in cinema. Unlike Eligibility Attributes, these are preferences rather than hard filters — they inform what gets surfaced, not what gets excluded.
+              </p>
+              {(() => {
+                const cats = form.projectCategories || [];
+                const toggleCat = (key) => {
+                  const current = form.projectCategories || [];
+                  const updated = current.includes(key)
+                    ? current.filter(k => k !== key)
+                    : [...current, key];
+                  setForm({ ...form, projectCategories: updated });
+                };
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {PROJECT_CATEGORIES.map(c => {
+                      const on = cats.includes(c.key);
+                      return (
+                        <button
+                          key={c.key}
+                          type="button"
+                          onClick={() => toggleCat(c.key)}
+                          style={{
+                            fontFamily: FN.b,
+                            textAlign: "left",
+                            padding: "10px 14px",
+                            borderRadius: "6px",
+                            border: "1px solid " + (on ? C.ac : C.bd),
+                            background: on ? C.ac + "15" : "transparent",
+                            color: on ? C.tx : C.tm,
+                            cursor: "pointer",
+                            transition: "all 0.15s",
+                            display: "flex",
+                            alignItems: "flex-start",
+                            gap: "10px"
+                          }}
+                        >
+                          <span style={{
+                            fontFamily: FN.m,
+                            fontSize: "12px",
+                            color: on ? C.ac : C.td,
+                            letterSpacing: "0.04em",
+                            minWidth: "16px",
+                            paddingTop: "1px"
+                          }}>
+                            {on ? "✓" : "○"}
+                          </span>
+                          <div style={{ flex: 1 }}>
+                            <p style={{
+                              fontSize: "13px",
+                              fontWeight: on ? 600 : 500,
+                              marginBottom: "2px",
+                              color: on ? C.ac : C.tx
+                            }}>
+                              {c.label}
+                            </p>
+                            <p style={{
+                              fontSize: "11px",
+                              color: C.tm,
+                              lineHeight: 1.5
+                            }}>
+                              {c.description}
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         </Card>
 
@@ -4788,6 +4935,9 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
                     })()}
                     {Array.isArray(p.eligibilityAttributes) && p.eligibilityAttributes.length > 0 && (
                       <Bdg color={C.ac}>🌟 {p.eligibilityAttributes.length} attr{p.eligibilityAttributes.length === 1 ? "" : "s"}</Bdg>
+                    )}
+                    {Array.isArray(p.projectCategories) && p.projectCategories.length > 0 && (
+                      <Bdg color={C.pp}>🏷 {p.projectCategories.length} cat{p.projectCategories.length === 1 ? "" : "s"}</Bdg>
                     )}
                   </div>
                 </div>
