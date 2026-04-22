@@ -77,6 +77,17 @@ const ELIGIBILITY_ATTRIBUTES = [
   { key: "immigrant-themes", label: "Immigration themes",        group: "themes" }
 ];
 
+// Script status options — optional per project. Distinguishes where the SCRIPT
+// itself is, independent of the project's production stage (which conflates
+// "script being written" with "script done but film not made yet").
+const SCRIPT_STATUS_OPTIONS = [
+  { key: "outline",     label: "Outline / Treatment" },
+  { key: "in-progress", label: "Draft in progress" },
+  { key: "first-draft", label: "Completed first draft" },
+  { key: "polished",    label: "Completed and polished" },
+  { key: "locked",      label: "Locked shooting script" }
+];
+
 const C = {
   bg: "#0a0a0c", sf: "#131318", bd: "#222230", bl: "#2a2a3a",
   tx: "#e8e8f0", tm: "#8888a0", td: "#555568",
@@ -1240,6 +1251,20 @@ Be brutally specific to THIS project and THIS team only. No generic advice. Rese
     const prof = profileRef.current;
     const todayISO = new Date().toISOString().slice(0, 10);
     const todayReadable = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+
+    // Build project context sections for Pass 1 prompt
+    const p_scriptStatusLabel = (SCRIPT_STATUS_OPTIONS.find(o => o.key === p.scriptStatus) || {}).label || null;
+    const p_scriptStatusLine = p_scriptStatusLabel
+      ? `Script Status: ${p_scriptStatusLabel}`
+      : "";
+    const p_attrs = (p.eligibilityAttributes || [])
+      .map(k => ELIGIBILITY_ATTRIBUTES.find(a => a.key === k))
+      .filter(Boolean)
+      .map(a => a.label);
+    const p_attrsLine = p_attrs.length > 0
+      ? `Eligibility Attributes: ${p_attrs.join(", ")}`
+      : "";
+
     const prompt = `You are an expert film industry researcher. Search for REAL, currently open or upcoming ${tf} for this project. Your job is to find opportunities where this SPECIFIC team's credentials give the highest probability of success.
 
 📅 TODAY'S DATE: ${todayReadable} (${todayISO})
@@ -1248,9 +1273,9 @@ COMPANY: ${prof.companyName} | ${prof.bio} | ${prof.location}
 PROJECT: "${p.title}"
 Format: ${p.format}
 Genre: ${p.genre || "?"}
-Stage: ${p.stage}
+Stage: ${p.stage}${p_scriptStatusLine ? "\n" + p_scriptStatusLine : ""}
 Logline: ${p.logline || "?"}
-Themes: ${p.themes || "?"}
+Themes: ${p.themes || "?"}${p_attrsLine ? "\n" + p_attrsLine : ""}
 Team Notes: ${p.teamNotes || "?"}${analysisContext}${teamContext}${exclusionContext}
 ${query && query.trim() ? "\nAdditional focus: " + query : ""}
 
@@ -1258,6 +1283,16 @@ ${query && query.trim() ? "\nAdditional focus: " + query : ""}
 This project is currently in "${p.stage}" stage. ${stageRule}
 
 Before returning ANY opportunity, verify it explicitly accepts projects in "${p.stage}" stage. If an opportunity requires a different stage, EXCLUDE IT. It is better to return fewer results than to include mismatched opportunities.
+
+📝 TERMINOLOGY AWARENESS (do not misinterpret stage labels):
+"Development" refers to the PROJECT'S phase, NOT the script being unfinished. ${p_scriptStatusLabel ? `This project's Script Status is "${p_scriptStatusLabel}" — treat the screenplay accordingly when matching opportunities. A "completed and polished" or "locked" script is READY for labs/competitions that want finished screenplays, even while the overall project stage is "Development."` : `If you're looking for screenplay labs/competitions, include ones that want completed or polished screenplays — projects in "Development" stage commonly have completed scripts.`}
+
+For demographic/thematic-specific opportunities: recognize these as equivalent:
+- "Women-led" ≈ "woman filmmaker" ≈ "female filmmaker" ≈ "women writers/directors" ≈ "woman-identifying"
+- "BIPOC" ≈ "filmmakers of color" ≈ "people of color" ≈ "underrepresented filmmakers"
+- "LGBTQ+" ≈ "queer" ≈ "LGBTQIA+" ≈ "LGBT"
+- "Jewish" ≈ "Jewish filmmaker" ≈ "of Jewish heritage"
+If this project declares an attribute (see Eligibility Attributes above), match it against synonyms, not exact strings.
 
 🗓 DEADLINE REQUIREMENT (NON-NEGOTIABLE):
 Today is ${todayReadable}. Only return opportunities whose deadline is TODAY OR LATER. If the deadline has already passed, EXCLUDE THE OPPORTUNITY entirely — do not return it even if it would normally be a strong match. If an opportunity is cyclical (annual, biannual) and this year's deadline has passed, either find the NEXT cycle's deadline or exclude it if the next cycle isn't yet announced. For opportunities with rolling deadlines or continuous intake, include them with deadline: "rolling" or "ongoing".
@@ -1407,8 +1442,13 @@ Find 12-18 real opportunities with CURRENT, FUTURE deadlines. The verification p
       .filter(Boolean)
       .map(a => a.label);
     const attrSection = attrLabels.length > 0
-      ? "PROJECT'S ELIGIBILITY ATTRIBUTES:\n" + attrLabels.map(l => "- " + l).join("\n")
-      : "PROJECT'S ELIGIBILITY ATTRIBUTES: (none declared by user)";
+      ? "PROJECT'S ELIGIBILITY ATTRIBUTES (filmmaker has declared these apply):\n" + attrLabels.map(l => "- " + l).join("\n")
+      : "PROJECT'S ELIGIBILITY ATTRIBUTES: (none declared by user — filmmaker hasn't checked any attributes in project settings)";
+
+    const scriptStatusLabel = (SCRIPT_STATUS_OPTIONS.find(o => o.key === project.scriptStatus) || {}).label || null;
+    const scriptStatusLine = scriptStatusLabel
+      ? `Script Status: ${scriptStatusLabel}`
+      : `Script Status: (not declared)`;
 
     const prompt = `You are verifying whether a specific film opportunity is a genuine fit for a specific project. You will evaluate three gates and return structured JSON with evidence.
 
@@ -1426,6 +1466,7 @@ PROJECT
 ═══════════════════════════════════════════
 Title: ${project.title}
 Stage: ${project.stage}
+${scriptStatusLine}
 Format: ${project.format}
 Genre: ${project.genre || "unspecified"}
 Logline: ${project.logline || "?"}
@@ -1433,12 +1474,58 @@ Themes: ${project.themes || "?"}
 ${attrSection}
 
 ═══════════════════════════════════════════
+🚨 CRITICAL TERMINOLOGY GUIDANCE — READ BEFORE EVALUATING
+═══════════════════════════════════════════
+
+**STAGE TERMINOLOGY — do not misinterpret:**
+
+"Development" stage is the MOST commonly misinterpreted. It refers to the PROJECT'S overall phase (not yet shot or produced), NOT to the script being unfinished. A project in "Development" stage very commonly has a COMPLETED, POLISHED screenplay that is ready to submit to labs and competitions. Check the Script Status field above to resolve ambiguity:
+
+- Stage "Development" + Script Status "Completed and polished" → screenplay is DONE. Opportunities asking for "completed scripts," "polished screenplays," "feature-length screenplays," or "a draft of your screenplay" should PASS stage gate.
+- Stage "Development" + Script Status "Draft in progress" → screenplay is still being written. Only opportunities explicitly accepting works-in-progress should pass.
+- Stage "Development" + Script Status "Locked shooting script" → screenplay is final. Same as polished for most grant purposes.
+- Stage "Completed" = the FILM is completed (finished, distributable). NOT the screenplay.
+- Stage "Pre-Production" / "Production" / "Post-Production" refer to the film's production phase, not the script.
+
+If the opportunity asks for a "completed screenplay" or "finished script," look at Script Status, NOT at the project stage. If Script Status is "polished" or "locked," PASS. Do not fail a project because its Stage says "Development" when its Script Status says the script is done.
+
+**DEMOGRAPHIC/ELIGIBILITY LABEL SYNONYMS — recognize these as equivalent:**
+
+Grant and fellowship language varies but these categories are treated as equivalent for eligibility purposes. Do NOT demand exact label matches.
+
+- "Women-led" ≈ "woman filmmaker" ≈ "women filmmakers" ≈ "woman-identifying filmmaker(s)" ≈ "female filmmaker(s)" ≈ "women writers" ≈ "women directors" ≈ "women creators" ≈ "women in film" ≈ "woman creator/artist." If the project declares "Women-led," it satisfies opportunities requiring any of these.
+- "BIPOC filmmaker(s)" ≈ "filmmakers of color" ≈ "people of color" ≈ "POC" ≈ "filmmakers from underrepresented communities" ≈ "underrepresented filmmakers" ≈ "diverse creators" ≈ "Black, Indigenous, and People of Color."
+- "LGBTQ+ filmmaker(s)" ≈ "LGBTQ+" ≈ "queer" ≈ "LGBT" ≈ "LGBTQIA+" ≈ "queer filmmakers" ≈ "gay, lesbian, bisexual, transgender, queer."
+- "Jewish filmmaker(s)" ≈ "Jewish" ≈ "Jewish creator" ≈ "of Jewish descent" ≈ "Jewish heritage."
+- "Disabled filmmaker(s)" ≈ "filmmakers with disabilities" ≈ "disability community" ≈ "disabled artists."
+- "Veteran(s) on team" ≈ "veteran filmmakers" ≈ "military veterans."
+- "Immigrant / first-gen team" ≈ "immigrant filmmakers" ≈ "first-generation American filmmakers" ≈ "diaspora filmmakers."
+
+For THEMES, similar synonyms apply:
+- "BIPOC stories / subjects" ≈ "stories centering people of color" ≈ "Black stories" ≈ "Latino stories" ≈ etc.
+- "LGBTQ+ stories / subjects" ≈ "queer stories" ≈ "gay-themed films" ≈ "trans narratives" ≈ etc.
+- "Women-centered stories" ≈ "female-driven narratives" ≈ "stories about women."
+- "Jewish themes / subjects" ≈ "Jewish stories" ≈ "Jewish heritage/culture themes" ≈ "stories about Jewish identity."
+
+When the project declares an attribute and the opportunity asks for a synonym of that attribute, the demographic gate PASSES.
+
+**UMBRELLA ORGANIZATIONS vs. SPECIFIC TRACKS — be strict:**
+
+Many festivals run multiple tracks/competitions. Austin Film Festival runs the Valhalla Entertainment Award (completed films), Screenplay Competition (screenplays), Second Rounders (screenplays), etc. Each has its OWN eligibility — do not conflate them.
+
+When evaluating this opportunity: "${candidate.name}" at "${candidate.organization}":
+- Verify eligibility for the SPECIFIC track named "${candidate.name}", not for the umbrella organization.
+- If you can ONLY find umbrella-level information (e.g., "Austin Film Festival accepts screenplays and films") but cannot find information specific to "${candidate.name}", return UNCERTAIN with a clear note that you couldn't find track-specific info.
+- Do NOT pass stage gate based on "the umbrella accepts this somewhere." The evidence must be for the specific track.
+- Example: if asked about "Austin FF — Valhalla Award" and you only find that Austin FF "accepts screenplays in its Screenplay Competition," that is NOT evidence Valhalla accepts screenplays. Return uncertain.
+
+═══════════════════════════════════════════
 YOUR TASK
 ═══════════════════════════════════════════
-Use web search to find the opportunity's official eligibility / submission guidelines page. Read it carefully. Then evaluate THREE gates:
+Use web search to find the opportunity's official eligibility / submission guidelines page for THIS SPECIFIC TRACK. Read it carefully. Then evaluate THREE gates:
 
 GATE 1 — STAGE:
-Does this opportunity explicitly accept projects at the "${project.stage}" stage? Look for language like "must be a completed feature," "screenplays in development only," "accepting rough cuts," "projects entering post-production," etc.
+Does this opportunity explicitly accept projects at the "${project.stage}" stage ${scriptStatusLabel ? "with script status \"" + scriptStatusLabel + "\"" : ""}? Apply the STAGE TERMINOLOGY guidance above. Look for language in THIS specific track's guidelines like "must be a completed feature," "screenplays in development only," "accepting rough cuts," "projects entering post-production," etc.
 
 GATE 2 — GENRE/FORMAT:
 Does this opportunity accept "${project.format}" ${project.genre ? "in the \"" + project.genre + "\" genre" : ""}? Look for format restrictions (narrative vs. documentary vs. animation vs. experimental vs. hybrid) and genre restrictions or preferences. A narrative horror project should FAIL a documentary-only grant. A feature-film-only grant should FAIL a short film.
@@ -1446,17 +1533,20 @@ Does this opportunity accept "${project.format}" ${project.genre ? "in the \"" +
 GATE 3 — DEMOGRAPHIC / THEMATIC:
 Does this opportunity have a demographic or thematic eligibility requirement (e.g., "for Jewish filmmakers," "BIPOC-led projects," "LGBTQ+ stories," "women directors")? 
 - If NO such requirement exists (opportunity is demographic/theme-neutral), return null for this gate.
-- If YES: check whether the project qualifies based on the eligibility attributes listed above. If the project's declared attributes include what the opportunity requires, pass. If the opportunity requires an attribute the project does NOT declare, fail. If ambiguous, uncertain.
+- If YES: check whether the project qualifies based on the eligibility attributes listed above. Apply the SYNONYM guidance above — declared attributes cover equivalent requirements. If the project's declared attributes include (directly OR as a synonym) what the opportunity requires, pass.
+- If the opportunity requires an attribute that the project does NOT declare AND isn't satisfied by synonyms, this is still NOT necessarily a fail — the filmmaker may simply not have checked that box even though it applies. In this case, return UNCERTAIN with a clear concern note like: "⚠ This requires [X]. Your project doesn't declare [X] in eligibility attributes. If [X] applies to you, edit your project to check it and re-audit."
+- Only fail if the opportunity clearly requires an attribute the project explicitly cannot satisfy (e.g., opportunity requires "first-time filmmaker only" and the project team has prior credits visible in the materials).
 
 ═══════════════════════════════════════════
 RULES — READ CAREFULLY
 ═══════════════════════════════════════════
-1. "Uncertain" is a VALID and IMPORTANT answer. Do NOT fabricate. If you cannot locate the eligibility page, return uncertain with a note explaining what you couldn't find.
-2. "Fail" requires CONFIDENT evidence the project does not qualify. Not a hunch.
-3. "Pass" requires CONFIDENT evidence the project does qualify. Not an assumption.
-4. Evidence must be a SPECIFIC phrase or clear paraphrase from the actual guidelines — NOT general knowledge about the opportunity.
+1. "Uncertain" is a VALID and IMPORTANT answer. Do NOT fabricate. If you cannot locate the track-specific eligibility page, return uncertain with a note explaining what you couldn't find.
+2. "Fail" requires CONFIDENT evidence the project does not qualify. Not a hunch, not a missing attribute check.
+3. "Pass" requires CONFIDENT evidence the project DOES qualify. Not an assumption from umbrella-level info.
+4. Evidence must be a SPECIFIC phrase or clear paraphrase from the actual guidelines for this TRACK — NOT general knowledge, NOT umbrella-level language.
 5. A team member's adjacent experience does NOT make a project eligible for a different genre/format. A documentary producer on a horror feature does not make the horror feature eligible for a documentary grant.
-6. Always include the sourceUrl where you found the evidence. Use the most specific URL possible (the eligibility page, not the homepage).
+6. Always include the sourceUrl where you found the evidence. Use the most specific URL possible (the track's eligibility page, not the umbrella homepage).
+7. Apply the TERMINOLOGY guidance above before making a call — don't be hyper-literal.
 
 ═══════════════════════════════════════════
 OUTPUT FORMAT
@@ -1520,6 +1610,19 @@ overallVerdict rules:
   // This finds those sibling tracks via a focused web search.
   const findSiblingTracks = async (failedOppName, failedOppOrg, project) => {
     const todayReadable = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    // Same context-building as verifyOpportunityFit and Pass 1 so siblings are evaluated with full awareness
+    const sib_scriptStatusLabel = (SCRIPT_STATUS_OPTIONS.find(o => o.key === project.scriptStatus) || {}).label || null;
+    const sib_scriptStatusLine = sib_scriptStatusLabel
+      ? `Script Status: ${sib_scriptStatusLabel}`
+      : "";
+    const sib_attrs = (project.eligibilityAttributes || [])
+      .map(k => ELIGIBILITY_ATTRIBUTES.find(a => a.key === k))
+      .filter(Boolean)
+      .map(a => a.label);
+    const sib_attrsLine = sib_attrs.length > 0
+      ? `Eligibility Attributes: ${sib_attrs.join(", ")}`
+      : "";
+
     const prompt = `You are helping a filmmaker find the RIGHT track at an organization where they picked the wrong one.
 
 ═══════════════════════════════════════════
@@ -1533,23 +1636,39 @@ Many festivals and institutes run MULTIPLE tracks/programs/competitions under on
 PROJECT
 ═══════════════════════════════════════════
 Title: ${project.title}
-Stage: ${project.stage}
+Stage: ${project.stage}${sib_scriptStatusLine ? "\n" + sib_scriptStatusLine : ""}
 Format: ${project.format}
 Genre: ${project.genre || "unspecified"}
 Logline: ${project.logline || "?"}
-Themes: ${project.themes || "?"}
+Themes: ${project.themes || "?"}${sib_attrsLine ? "\n" + sib_attrsLine : ""}
 
 📅 TODAY'S DATE: ${todayReadable}
+
+═══════════════════════════════════════════
+📝 TERMINOLOGY AWARENESS (READ BEFORE MATCHING)
+═══════════════════════════════════════════
+
+STAGE: "Development" refers to the PROJECT'S overall phase, NOT to the script being unfinished. ${sib_scriptStatusLabel ? `Check Script Status above: this project's script is "${sib_scriptStatusLabel}." Treat the screenplay accordingly — a "completed and polished" or "locked" script is READY for labs, competitions, and screenplay-focused tracks, even while the overall project stage is "Development."` : `Projects in "Development" stage commonly have completed scripts ready for screenplay labs/competitions.`}
+
+DEMOGRAPHIC SYNONYMS (recognize as equivalent):
+- "Women-led" ≈ "woman filmmaker(s)" ≈ "women writers/directors" ≈ "female filmmaker" ≈ "woman-identifying"
+- "BIPOC filmmaker(s)" ≈ "filmmakers of color" ≈ "people of color" ≈ "underrepresented filmmakers"
+- "LGBTQ+ filmmaker(s)" ≈ "queer" ≈ "LGBTQIA+" ≈ "LGBT"
+- "Jewish filmmaker(s)" ≈ "Jewish" ≈ "of Jewish heritage"
+- "Disabled" ≈ "filmmakers with disabilities" ≈ "disability community"
+
+If this project declares an attribute (see Eligibility Attributes above), treat it as matching synonyms.
 
 ═══════════════════════════════════════════
 YOUR TASK
 ═══════════════════════════════════════════
 1. Use web search to find ALL the competitions, labs, grants, or programs that "${failedOppOrg}" runs.
-2. For each one, determine whether it accepts projects at "${project.stage}" stage in "${project.format}" format.
+2. For each one, determine whether it accepts projects at "${project.stage}" stage${sib_scriptStatusLabel ? ` (with script status "${sib_scriptStatusLabel}")` : ""} in "${project.format}" format.
 3. Return ONLY the tracks at "${failedOppOrg}" that would accept this specific project. Do NOT include tracks from other organizations.
 4. Exclude the original failed track ("${failedOppName}").
 5. Only include tracks with deadlines TODAY OR LATER. Exclude any past-deadline tracks.
 6. If "${failedOppOrg}" has NO other tracks that fit, return an empty array — do NOT invent tracks.
+7. Apply the TERMINOLOGY guidance above — don't be hyper-literal about stage labels or demographic phrasing.
 
 ═══════════════════════════════════════════
 OUTPUT FORMAT
@@ -3128,6 +3247,7 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
     genre: "",
     format: "Feature Film",
     stage: "Development",
+    scriptStatus: "",  // Optional: where the script itself is, independent of production stage
     budget: "",
     runtime: "",
     targetAudience: "",
@@ -3592,6 +3712,44 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
                   <option key={s}>{s}</option>
                 ))}
               </select>
+            </div>
+            {/* Script Status — optional, distinguishes where the script itself is */}
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={LS}>Script Status (Optional)</label>
+              <p style={{ fontSize: "11px", color: C.tm, lineHeight: 1.5, marginBottom: "8px" }}>
+                Where is the screenplay itself? Helps discovery and audit tell the difference between "project in development" (could mean many things) and "script is done and ready to submit."
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                {SCRIPT_STATUS_OPTIONS.map(opt => {
+                  const selected = form.scriptStatus === opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setForm({
+                        ...form,
+                        scriptStatus: selected ? "" : opt.key  // toggle off if clicking same one
+                      })}
+                      style={{
+                        fontFamily: FN.m,
+                        fontSize: "12px",
+                        padding: "5px 10px",
+                        borderRadius: "14px",
+                        border: "1px solid " + (selected ? C.ac : C.bd),
+                        background: selected ? C.ac + "20" : "transparent",
+                        color: selected ? C.ac : C.tm,
+                        cursor: "pointer",
+                        transition: "all 0.15s"
+                      }}
+                    >
+                      {selected ? "✓ " : ""}{opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p style={{ fontSize: "11px", color: C.td, marginTop: "6px", fontStyle: "italic" }}>
+                Leave blank if this doesn't apply (e.g. documentary, non-script-based project). Click again to deselect.
+              </p>
             </div>
             <div>
               <label style={LS}>Budget</label>
