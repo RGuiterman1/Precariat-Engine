@@ -11,7 +11,8 @@ const SK = {
   APPS: "pre-apps",
   PAY: "pre-pay",
   FILES: "pre-files",
-  FIELD_LIB: "pre-field-library"
+  FIELD_LIB: "pre-field-library",
+  REJECTED: "pre-rejected"
 };
 
 const DEF_PROFILE = {
@@ -541,9 +542,21 @@ function extractJSON(text) {
 
 function parseDate(str) {
   if (!str) return null;
-  if (["Rolling", "TBD", "Varies", "Ongoing", "Unknown"].includes(str)) return null;
-  const d = new Date(str.replace(/,/g, "").trim());
-  if (!isNaN(d.getTime()) && d.getFullYear() > 2020) return d;
+  const s = String(str).trim();
+  // Explicit non-date status strings
+  if (["Rolling", "TBD", "Varies", "Ongoing", "Unknown"].includes(s)) return null;
+  // Recognize verbose availability-gate output: "discontinued", "on hold", etc → null
+  const lower = s.toLowerCase();
+  if (lower.startsWith("discontinued") || lower.startsWith("on hold") || lower.startsWith("on-hold") ||
+      lower.startsWith("paused") || lower.includes("no longer offered") || lower.includes("permanently ended") ||
+      lower.startsWith("truly rolling") || lower.startsWith("rolling") || lower.startsWith("continuous")) {
+    return null;
+  }
+  // Try to extract date portion from verbose strings like "April 2, 2026 at 3pm ET (already passed...)"
+  // Strip parenthetical commentary, trailing time qualifiers
+  const cleanStr = s.replace(/\([^)]*\)/g, "").replace(/at \d+[:\d]*\s*(am|pm|ET|PT|CT|MT|UTC|EST|PST|CST|MST|GMT)?/gi, "").trim();
+  const d = new Date(cleanStr.replace(/,/g, "").trim());
+  if (!isNaN(d.getTime()) && d.getFullYear() > 2020 && d.getFullYear() < 2100) return d;
   return null;
 }
 
@@ -570,7 +583,10 @@ function parseFee(fee) {
   if (!fee || typeof fee !== "string") return 0;
   const s = fee.toLowerCase().trim();
   if (s === "free" || s === "$0" || s === "0" || s === "n/a" || s === "none" || s === "waived") return 0;
-  const matches = s.match(/\d+(?:\.\d+)?/g);
+  // Strip commas FROM WITHIN numbers before extracting — handles "$1,500" or "$5,000 – $10,000"
+  // First normalize: replace "5,000" with "5000" by removing commas between digits
+  const normalized = s.replace(/(\d),(\d)/g, "$1$2").replace(/(\d),(\d)/g, "$1$2");
+  const matches = normalized.match(/\d+(?:\.\d+)?/g);
   if (!matches || matches.length === 0) return 0;
   const nums = matches.map(n => parseFloat(n)).filter(n => !isNaN(n));
   if (nums.length === 0) return 0;
@@ -583,7 +599,9 @@ function parseFee(fee) {
 
 function isFeeRange(fee) {
   if (!fee || typeof fee !== "string") return false;
-  const matches = fee.match(/\d+(?:\.\d+)?/g);
+  // Same comma-normalization as parseFee
+  const normalized = fee.replace(/(\d),(\d)/g, "$1$2").replace(/(\d),(\d)/g, "$1$2");
+  const matches = normalized.match(/\d+(?:\.\d+)?/g);
   if (!matches || matches.length < 2) return false;
   const nums = matches.map(n => parseFloat(n));
   return Math.max(...nums) !== Math.min(...nums);
@@ -860,6 +878,11 @@ function AppMain() {
   //     }, ... }
   const [fieldLibrary, setFieldLibrary] = useState({});
 
+  // Rejected opportunities — user-declared "don't surface this again."
+  // Array of: { name, organization, reason, rejectedAt }
+  // Used in discovery to exclude previously-rejected opps before verification runs.
+  const [rejectedOpps, setRejectedOpps] = useState([]);
+
   // Background jobs system — operations continue running when you switch tabs
   const [jobs, setJobs] = useState([]);
   // job = { id, kind: "analyze"|"search"|"generate", status: "running"|"error", label, error, startedAt, meta }
@@ -878,6 +901,7 @@ function AppMain() {
   const profileRef = React.useRef(profile);
   const oppsRef = React.useRef(opps);
   const fieldLibraryRef = React.useRef(fieldLibrary);
+  const rejectedOppsRef = React.useRef(rejectedOpps);
 
   useEffect(() => { projectsRef.current = projects; }, [projects]);
   useEffect(() => { appsRef.current = apps; }, [apps]);
@@ -885,11 +909,12 @@ function AppMain() {
   useEffect(() => { profileRef.current = profile; }, [profile]);
   useEffect(() => { oppsRef.current = opps; }, [opps]);
   useEffect(() => { fieldLibraryRef.current = fieldLibrary; }, [fieldLibrary]);
+  useEffect(() => { rejectedOppsRef.current = rejectedOpps; }, [rejectedOpps]);
 
   useEffect(() => {
     (async () => {
       try {
-        const keys = [SK.PROFILE, SK.PROJECTS, SK.OPPS, SK.APPS, SK.PAY, SK.FIELD_LIB];
+        const keys = [SK.PROFILE, SK.PROJECTS, SK.OPPS, SK.APPS, SK.PAY, SK.FIELD_LIB, SK.REJECTED];
         const results = await Promise.all(
           keys.map(k => window.storage.get(k).catch(() => null))
         );
@@ -922,6 +947,10 @@ function AppMain() {
         }
         if (results[4] && results[4].value) setPay(JSON.parse(results[4].value));
         if (results[5] && results[5].value) setFieldLibrary(JSON.parse(results[5].value));
+        if (results[6] && results[6].value) {
+          const loaded = JSON.parse(results[6].value);
+          if (Array.isArray(loaded)) setRejectedOpps(loaded);
+        }
       } catch (err) {
         console.error(err);
       }
@@ -944,6 +973,32 @@ function AppMain() {
   const sApps = makeSaver(SK.APPS, setApps);
   const sPay = makeSaver(SK.PAY, setPay);
   const sFieldLibrary = makeSaver(SK.FIELD_LIB, setFieldLibrary);
+  const sRejectedOpps = makeSaver(SK.REJECTED, setRejectedOpps);
+
+  // Reject an opportunity so it won't be re-surfaced by future discovery runs.
+  const rejectOpportunity = (name, organization, reason) => {
+    const current = rejectedOppsRef.current || [];
+    const keyExists = current.some(r =>
+      (r.name || "").toLowerCase().trim() === (name || "").toLowerCase().trim() &&
+      (r.organization || "").toLowerCase().trim() === (organization || "").toLowerCase().trim()
+    );
+    if (keyExists) return;
+    sRejectedOpps([...current, {
+      name,
+      organization,
+      reason: reason || "",
+      rejectedAt: new Date().toISOString()
+    }]);
+  };
+
+  // Undo a rejection (e.g., from a "rejected opportunities" management view).
+  const unrejectOpportunity = (name, organization) => {
+    const current = rejectedOppsRef.current || [];
+    sRejectedOpps(current.filter(r =>
+      !((r.name || "").toLowerCase().trim() === (name || "").toLowerCase().trim() &&
+        (r.organization || "").toLowerCase().trim() === (organization || "").toLowerCase().trim())
+    ));
+  };
 
   // Normalize an opportunity name+org pair into a stable library key.
   // Case-insensitive, whitespace-collapsed, with a | separator.
@@ -1033,6 +1088,19 @@ function AppMain() {
       const projectFiles = await loadProjectFiles(p.id);
       const prof = profileRef.current;
 
+      // Build script status and eligibility attribute context
+      const an_scriptStatusLabel = (SCRIPT_STATUS_OPTIONS.find(o => o.key === p.scriptStatus) || {}).label || null;
+      const an_scriptStatusLine = an_scriptStatusLabel
+        ? `\nScript Status: ${an_scriptStatusLabel}`
+        : "";
+      const an_attrLabels = (p.eligibilityAttributes || [])
+        .map(k => ELIGIBILITY_ATTRIBUTES.find(ea => ea.key === k))
+        .filter(Boolean)
+        .map(ea => ea.label);
+      const an_attrsLine = an_attrLabels.length > 0
+        ? `\nDeclared Eligibility Attributes: ${an_attrLabels.join(", ")}`
+        : "";
+
       const textPrompt = `You are a world-class film strategist who has programmed Sundance, Cannes, and advised A24. Your analysis leaves NO stone unturned — you deeply research every person attached to a project because even a single collaborator's credentials can unlock entire tiers of grants, labs, and festivals.
 
 ═══════════════════════════════════════════════════════════
@@ -1047,14 +1115,14 @@ PROJECT:
 Title: "${p.title}"
 Format: ${p.format}
 Genre: ${p.genre || "Not specified"}
-Stage: ${p.stage}
+Stage: ${p.stage}${an_scriptStatusLine}
 Logline: ${p.logline || "Not provided"}
 Synopsis: ${p.synopsis || "Not provided"}
 Budget: ${p.budget || "Not specified"}
 Runtime: ${p.runtime || "Not specified"}
 Target Audience: ${p.targetAudience || "Not specified"}
 Themes: ${p.themes || "Not specified"}
-Team Notes: ${p.teamNotes || "Not specified"}
+Team Notes: ${p.teamNotes || "Not specified"}${an_attrsLine}
 
 ${projectFiles.length > 0 ? "ATTACHED MATERIALS (review carefully for deep analysis):\n" + projectFiles.map(f => "- " + f.name + " (" + f.category + ")").join("\n") + "\n\nUse attached materials as the PRIMARY source. Reference specific scenes, visuals, or content from them.\n" : ""}
 
@@ -1194,7 +1262,7 @@ Be brutally specific to THIS project and THIS team only. No generic advice. Rese
       : filter.toLowerCase();
 
     const stageRules = {
-      "Development": "Only return opportunities that accept projects IN DEVELOPMENT (screenplay stage, not yet in production). This includes: screenwriting grants, script development funds, writers labs, development fellowships, story/screenplay competitions, early-stage incubators, and development residencies. DO NOT return film festivals (which require finished films), completed-film awards, distribution grants, post-production funds, or anything requiring an existing cut or finished work.",
+      "Development": "Return opportunities for projects in the DEVELOPMENT phase (script-focused, not yet in production). This includes: screenwriting grants, script development funds, writers labs, development fellowships, screenplay competitions, early-stage incubators, and development residencies. These typically want a COMPLETED or polished screenplay (see the project's Script Status if declared). DO NOT return film festivals (which require finished films), completed-film awards, distribution grants, post-production funds, or anything requiring an existing cut or finished work.",
       "Pre-Production": "Only return opportunities that accept projects in PRE-PRODUCTION (script is locked, preparing to shoot). This includes: production financing grants, pre-production labs, production fellowships, producer labs, and packaging/financing programs. DO NOT return completed-film festivals, post-production funds, or development-only grants.",
       "Production": "Only return opportunities that accept projects currently IN PRODUCTION (actively shooting). This includes: production grants, in-progress financing, and labs accepting projects mid-production. DO NOT return completed-film festivals, development-only grants, or post-production funds.",
       "Post-Production": "Only return opportunities that accept projects in POST-PRODUCTION (shot but not finished). This includes: finishing funds, post-production grants, work-in-progress showcases, rough-cut labs, and WIP festivals. DO NOT return completed-film festivals requiring a locked final cut (unless they have a WIP section), development grants, or production-only funds.",
@@ -1220,6 +1288,15 @@ Be brutally specific to THIS project and THIS team only. No generic advice. Rese
       exclusionContext = "\n\n🚫 ALREADY APPLIED WITH THIS PROJECT — DO NOT INCLUDE THESE IN RESULTS:\n"
         + exclusionList.map(n => "- " + n).join("\n")
         + "\n\nThe user has existing applications for \"" + p.title + "\" with the opportunities above. EXCLUDE them entirely from your search results. Find NEW opportunities only. Note: opportunities the user has applied to with OTHER projects are still eligible — only exclude ones tied to this specific project.";
+    }
+
+    // Add user-rejected opportunities to exclusion context (global rejection — user has said don't surface these again for ANY project)
+    const rejectedList = (rejectedOppsRef.current || []).map(r => r.name + " — " + r.organization);
+    let rejectionContext = "";
+    if (rejectedList.length > 0) {
+      rejectionContext = "\n\n❌ USER HAS REJECTED THESE OPPORTUNITIES — DO NOT INCLUDE THEM IN RESULTS:\n"
+        + rejectedList.map(n => "- " + n).join("\n")
+        + "\n\nThe user has explicitly rejected the opportunities above (past-deadline, wrong fit, or otherwise unwanted). Do not surface them again regardless of how strong a match they might otherwise seem.";
     }
 
     let analysisContext = "";
@@ -1276,7 +1353,7 @@ Genre: ${p.genre || "?"}
 Stage: ${p.stage}${p_scriptStatusLine ? "\n" + p_scriptStatusLine : ""}
 Logline: ${p.logline || "?"}
 Themes: ${p.themes || "?"}${p_attrsLine ? "\n" + p_attrsLine : ""}
-Team Notes: ${p.teamNotes || "?"}${analysisContext}${teamContext}${exclusionContext}
+Team Notes: ${p.teamNotes || "?"}${analysisContext}${teamContext}${exclusionContext}${rejectionContext}
 ${query && query.trim() ? "\nAdditional focus: " + query : ""}
 
 🚨 CRITICAL STAGE REQUIREMENT (NON-NEGOTIABLE):
@@ -1295,7 +1372,17 @@ For demographic/thematic-specific opportunities: recognize these as equivalent:
 If this project declares an attribute (see Eligibility Attributes above), match it against synonyms, not exact strings.
 
 🗓 DEADLINE REQUIREMENT (NON-NEGOTIABLE):
-Today is ${todayReadable}. Only return opportunities whose deadline is TODAY OR LATER. If the deadline has already passed, EXCLUDE THE OPPORTUNITY entirely — do not return it even if it would normally be a strong match. If an opportunity is cyclical (annual, biannual) and this year's deadline has passed, either find the NEXT cycle's deadline or exclude it if the next cycle isn't yet announced. For opportunities with rolling deadlines or continuous intake, include them with deadline: "rolling" or "ongoing".
+Today is ${todayReadable}. Only return opportunities whose deadline is TODAY OR LATER. If the deadline has already passed, EXCLUDE THE OPPORTUNITY entirely — do not return it even if it would normally be a strong match. If an opportunity is cyclical (annual, biannual) and this year's deadline has passed, either find the NEXT cycle's deadline or exclude it if the next cycle isn't yet announced.
+
+"Rolling" deadline has a STRICT definition. Only use deadline: "rolling" when the grant explicitly states "applications accepted on a rolling basis," "continuous intake," "year-round submissions," or equivalent language. DO NOT use "rolling" when:
+- The grant has an annual deadline (even if the relationship with awardees spans multiple years)
+- The grant engages winners over a multi-year period after award (e.g., "5-year relationship with awardees" is NOT rolling — that describes post-award engagement, not application intake)
+- The grant has cohort-based cycles
+- You can't find a fixed deadline and are guessing
+
+If you cannot confirm a specific future deadline AND cannot confirm continuous year-round intake, EXCLUDE the opportunity. Do not default to "rolling" as a fallback.
+
+Common mistake to avoid: a grant that says "we engage awardees for 5 years" or "our cycle runs every two years" is NOT rolling — those describe the AWARD structure, not the APPLICATION INTAKE. An annual grant whose deadline has passed should be EXCLUDED regardless of how long the award period is.
 
 🎭 MULTI-TRACK FESTIVALS & ORGANIZATIONS (CRITICAL):
 Many festivals and institutes run MULTIPLE distinct competitions, labs, or grants under a single umbrella, each with its own eligibility. Do not collapse them into one opportunity. Examples:
@@ -1334,9 +1421,20 @@ Find 12-18 real opportunities with CURRENT, FUTURE deadlines. The verification p
             .filter(ap => ap.status === "submitted")
             .map(ap => (ap.oppName || "").toLowerCase().trim() + "|" + (ap.oppOrg || "").toLowerCase().trim())
         );
+        // Also filter out user-rejected opportunities (they said "don't surface again")
+        const rejectedSet = new Set(
+          (rejectedOppsRef.current || []).map(r =>
+            (r.name || "").toLowerCase().trim() + "|" + (r.organization || "").toLowerCase().trim()
+          )
+        );
         const dedupedCandidates = parsed.filter(o => {
           const key = (o.name || "").toLowerCase().trim() + "|" + (o.organization || "").toLowerCase().trim();
-          return !submittedSet.has(key);
+          if (submittedSet.has(key)) return false;
+          if (rejectedSet.has(key)) {
+            console.log("Discovery: dropped user-rejected opp:", o.name);
+            return false;
+          }
+          return true;
         });
 
         // Filter out candidates whose deadline has already passed.
@@ -1450,7 +1548,13 @@ Find 12-18 real opportunities with CURRENT, FUTURE deadlines. The verification p
       ? `Script Status: ${scriptStatusLabel}`
       : `Script Status: (not declared)`;
 
-    const prompt = `You are verifying whether a specific film opportunity is a genuine fit for a specific project. You will evaluate three gates and return structured JSON with evidence.
+    const verifyTodayReadable = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    const verifyTodayISO = new Date().toISOString().slice(0, 10);
+    const candidateDeadline = candidate.deadline || "(not provided)";
+
+    const prompt = `You are verifying whether a specific film opportunity is a genuine fit for a specific project. You will evaluate FOUR gates and return structured JSON with evidence.
+
+📅 TODAY'S DATE: ${verifyTodayReadable} (${verifyTodayISO})
 
 ═══════════════════════════════════════════
 OPPORTUNITY
@@ -1460,6 +1564,7 @@ Organization: ${candidate.organization}
 Type: ${candidate.type}
 URL: ${candidate.url || "(none provided)"}
 Description: ${candidate.description || ""}
+Claimed deadline: ${candidateDeadline}
 
 ═══════════════════════════════════════════
 PROJECT
@@ -1522,7 +1627,7 @@ When evaluating this opportunity: "${candidate.name}" at "${candidate.organizati
 ═══════════════════════════════════════════
 YOUR TASK
 ═══════════════════════════════════════════
-Use web search to find the opportunity's official eligibility / submission guidelines page for THIS SPECIFIC TRACK. Read it carefully. Then evaluate THREE gates:
+Use web search to find the opportunity's official eligibility / submission guidelines page for THIS SPECIFIC TRACK. Read it carefully. Then evaluate FOUR gates:
 
 GATE 1 — STAGE:
 Does this opportunity explicitly accept projects at the "${project.stage}" stage ${scriptStatusLabel ? "with script status \"" + scriptStatusLabel + "\"" : ""}? Apply the STAGE TERMINOLOGY guidance above. Look for language in THIS specific track's guidelines like "must be a completed feature," "screenplays in development only," "accepting rough cuts," "projects entering post-production," etc.
@@ -1536,6 +1641,24 @@ Does this opportunity have a demographic or thematic eligibility requirement (e.
 - If YES: check whether the project qualifies based on the eligibility attributes listed above. Apply the SYNONYM guidance above — declared attributes cover equivalent requirements. If the project's declared attributes include (directly OR as a synonym) what the opportunity requires, pass.
 - If the opportunity requires an attribute that the project does NOT declare AND isn't satisfied by synonyms, this is still NOT necessarily a fail — the filmmaker may simply not have checked that box even though it applies. In this case, return UNCERTAIN with a clear concern note like: "⚠ This requires [X]. Your project doesn't declare [X] in eligibility attributes. If [X] applies to you, edit your project to check it and re-audit."
 - Only fail if the opportunity clearly requires an attribute the project explicitly cannot satisfy (e.g., opportunity requires "first-time filmmaker only" and the project team has prior credits visible in the materials).
+
+GATE 4 — AVAILABILITY:
+Is this opportunity CURRENTLY AVAILABLE for submissions as of ${verifyTodayReadable}? This is a critical check. Candidate discovery sometimes mislabels closed, discontinued, or paused opportunities as active when they're not.
+
+This gate covers THREE distinct ways an opportunity can be unavailable. You must check for all three:
+
+(a) **Past deadline** — the most recent annual/cyclical deadline has passed AND the next cycle's deadline has not been announced yet. CRITICAL: the phrase "we engage awardees over X years" describes the AWARD period, NOT rolling intake. "Cohort-based" or "we accept every two years" indicates CYCLICAL intake, NOT rolling.
+
+(b) **Discontinued** — the program has been explicitly ended, cancelled, or permanently retired. Look for language like "no longer offered," "discontinued due to lack of funding," "we are no longer offering this fellowship," "program has been sunset," "this grant has ended." If the official guidelines page or FAQ says the program doesn't exist anymore, the opportunity FAILS availability.
+
+(c) **On hold / paused** — the program exists but is currently not accepting submissions pending funding, review, or restructuring. Look for "currently on hiatus," "paused pending funding," "not accepting applications at this time," "we hope to resume in [year]."
+
+Verdicts:
+- PASS: You find either (i) a specific FUTURE deadline after ${verifyTodayReadable}, OR (ii) explicit guideline language confirming continuous year-round intake ("applications accepted on a rolling basis," "continuous intake," "year-round submissions"). The program is active and accepting.
+- FAIL: ANY of the three unavailability conditions above is confirmed. State WHICH condition in the evidence — discontinued, past-deadline, or on-hold. The actualDeadline field should say what kind of failure this is.
+- UNCERTAIN: You can't clearly determine the status from the guidelines page.
+
+The candidate claimed the deadline is "${candidateDeadline}". VERIFY THIS CLAIM. If the candidate said "rolling" but the guidelines actually show an annual deadline that has passed, FAIL. If the candidate lists a program that FAQ/guidelines say is discontinued, FAIL. If the candidate provided a specific date, verify it matches what the guidelines currently show.
 
 ═══════════════════════════════════════════
 RULES — READ CAREFULLY
@@ -1566,14 +1689,22 @@ Respond ONLY with JSON (no markdown, no commentary):
     "concern": "..."
   },
   "demographicGate": null,
+  "availabilityGate": {
+    "verdict": "pass" | "fail" | "uncertain",
+    "evidence": "exact phrase from guidelines/FAQ showing status (deadline text, discontinuation notice, pause notice, or rolling-intake confirmation)",
+    "sourceUrl": "URL",
+    "concern": "explanation if fail or uncertain, else empty",
+    "failureType": "'past-deadline' | 'discontinued' | 'on-hold' | null — null when verdict is pass or uncertain",
+    "actualDeadline": "the real deadline or status — e.g., 'April 2, 2026 at 3pm ET (already passed, next cycle not yet announced)' or 'March 15, 2027' or 'truly rolling — no fixed deadline' or 'Discontinued: fellowship no longer offered per 2026 FAQ' or 'On hold pending funding'"
+  },
   "overallVerdict": "verified" | "fail" | "uncertain"
 }
 
 If there is a demographic/thematic gate, replace null with the same object shape as the other gates.
 
 overallVerdict rules:
-- "verified" if all non-null gates return "pass"
-- "fail" if ANY gate returns "fail"
+- "verified" if all non-null gates (including availabilityGate) return "pass"
+- "fail" if ANY gate returns "fail" — INCLUDING availabilityGate. A closed or discontinued opportunity is a definitive fail.
 - "uncertain" if no gate fails but at least one gate is "uncertain"`;
 
     const response = await askClaude(prompt, true); // use web search
@@ -1586,15 +1717,21 @@ overallVerdict rules:
         error: "could not parse verification response",
         stageGate: null,
         genreGate: null,
-        demographicGate: null
+        demographicGate: null,
+        availabilityGate: null
       };
+    }
+
+    // Back-compat: if the model returned the old field name "deadlineGate", use it as availabilityGate
+    if (result.deadlineGate && !result.availabilityGate) {
+      result.availabilityGate = result.deadlineGate;
     }
 
     // Ensure overallVerdict is present and valid
     const validVerdicts = ["verified", "fail", "uncertain"];
     if (!validVerdicts.includes(result.overallVerdict)) {
-      // Derive from gates if missing
-      const gates = [result.stageGate, result.genreGate, result.demographicGate].filter(g => g && g.verdict);
+      // Derive from gates if missing (include availabilityGate)
+      const gates = [result.stageGate, result.genreGate, result.demographicGate, result.availabilityGate].filter(g => g && g.verdict);
       if (gates.some(g => g.verdict === "fail")) result.overallVerdict = "fail";
       else if (gates.every(g => g.verdict === "pass") && gates.length > 0) result.overallVerdict = "verified";
       else result.overallVerdict = "uncertain";
@@ -1827,6 +1964,19 @@ Return 0-5 tracks. Quality over quantity. If no sibling tracks fit, return [].`;
       let analysisContext = "";
       if (a) analysisContext = "\nPROJECT INTELLIGENCE:\n" + JSON.stringify(a);
 
+      // Build script status and eligibility attribute context
+      const gen_scriptStatusLabel = (SCRIPT_STATUS_OPTIONS.find(o => o.key === p.scriptStatus) || {}).label || null;
+      const gen_scriptStatusLine = gen_scriptStatusLabel
+        ? `\n• Script Status: ${gen_scriptStatusLabel}`
+        : "";
+      const gen_attrLabels = (p.eligibilityAttributes || [])
+        .map(k => ELIGIBILITY_ATTRIBUTES.find(ea => ea.key === k))
+        .filter(Boolean)
+        .map(ea => ea.label);
+      const gen_attrsLine = gen_attrLabels.length > 0
+        ? `\n• Eligibility Attributes: ${gen_attrLabels.join(", ")}`
+        : "";
+
       const textPrompt = `You are a world-class grant writer and application strategist who has helped films win Sundance, Tribeca, Cinereach, SFFILM, Sundance Institute labs, and dozens of major grants. Your success rate is extraordinary because you NEVER write generic applications — every single submission is meticulously tailored to the specific opportunity's values, voice, aesthetic preferences, selection criteria, and the unique things their committees respond to.
 
 ═══════════════════════════════════════════════════════════
@@ -1868,13 +2018,18 @@ PROJECT
 • Title: "${p.title}"
 • Format: ${p.format}
 • Genre: ${p.genre || "?"}
-• Stage: ${p.stage}
+• Stage: ${p.stage}${gen_scriptStatusLine}${gen_attrsLine}
 • Logline: ${p.logline || "?"}
 • Synopsis: ${p.synopsis || "?"}
 • Themes: ${p.themes || "?"}
 • Budget: ${p.budget || "?"}
 • Team Notes: ${p.teamNotes || "?"}${analysisContext}
 
+${gen_scriptStatusLabel ? `📝 IMPORTANT — SCRIPT STATUS CONTEXT:
+The screenplay is "${gen_scriptStatusLabel}". When writing about the project's readiness, use this to your advantage — "Development" stage does NOT mean the script is incomplete. Speak about the screenplay accurately: if polished or locked, describe it as a completed work ready for the next phase. If in progress, describe the creative direction and work remaining. Do NOT default to vague "in development" language that could undersell a finished script.
+` : ""}${gen_attrLabels.length > 0 ? `🌟 IMPORTANT — TEAM & THEMATIC ATTRIBUTES:
+This project has the following declared eligibility attributes: ${gen_attrLabels.join(", ")}. When the opportunity you're writing for aligns with these attributes (e.g., applying to a Jewish film grant when the team/themes are Jewish, or a women-led grant when the project is women-led), FOREGROUND these authentically in the application. Do not manufacture claims that aren't declared — but do use what IS declared to its full advantage.
+` : ""}
 ${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review the attached files (screenplay, pitch deck, look book, etc.) carefully. Reference SPECIFIC scenes, visuals, characters, or moments from them — not vague summaries. This specificity is what separates winning applications from generic ones." : ""}
 
 ${(manualFields && manualFields.length > 0) ? `
@@ -2177,6 +2332,22 @@ No generic language. No boilerplate. Only write what's actually asked for. Every
       let analysisContext = "";
       if (a) analysisContext = "\nUPDATED PROJECT INTELLIGENCE:\n" + JSON.stringify(a);
 
+      // Build script status and eligibility attribute context (used by both regenerate and augment modes)
+      const ref_scriptStatusLabel = (SCRIPT_STATUS_OPTIONS.find(opt => opt.key === p.scriptStatus) || {}).label || null;
+      const ref_scriptStatusLine = ref_scriptStatusLabel
+        ? `\n• Script Status: ${ref_scriptStatusLabel}`
+        : "";
+      const ref_attrLabels = (p.eligibilityAttributes || [])
+        .map(k => ELIGIBILITY_ATTRIBUTES.find(ea => ea.key === k))
+        .filter(Boolean)
+        .map(ea => ea.label);
+      const ref_attrsLine = ref_attrLabels.length > 0
+        ? `\n• Eligibility Attributes: ${ref_attrLabels.join(", ")}`
+        : "";
+      const ref_attributeGuidance = (ref_scriptStatusLabel || ref_attrLabels.length > 0)
+        ? `\n${ref_scriptStatusLabel ? `📝 Script Status "${ref_scriptStatusLabel}" — a completed/polished script is READY for labs/competitions, don't undersell with vague "in development" language.\n` : ""}${ref_attrLabels.length > 0 ? `🌟 Declared attributes: ${ref_attrLabels.join(", ")}. Foreground these authentically when the opportunity aligns.\n` : ""}`
+        : "";
+
       let textPrompt;
       if (mode === "regenerate") {
         textPrompt = `You are a world-class grant writer and application strategist. Your success rate is extraordinary because you NEVER write generic applications — every submission is meticulously tailored to the specific opportunity's values, voice, aesthetic, and selection criteria.
@@ -2217,13 +2388,13 @@ PROJECT
 • Title: "${p.title}"
 • Format: ${p.format}
 • Genre: ${p.genre || "?"}
-• Stage: ${p.stage}
+• Stage: ${p.stage}${ref_scriptStatusLine}${ref_attrsLine}
 • Logline: ${p.logline || "?"}
 • Synopsis: ${p.synopsis || "?"}
 • Themes: ${p.themes || "?"}
 • Budget: ${p.budget || "?"}
 • Team Notes: ${p.teamNotes || "?"}${analysisContext}
-
+${ref_attributeGuidance}
 ${projectFiles.length > 0 ? "ATTACHED MATERIALS: Review carefully and reference specific scenes, visuals, characters, or moments from them — not vague summaries." : ""}
 
 ${(effectiveFields && effectiveFields.length > 0) ? `
@@ -2311,12 +2482,12 @@ If the existing draft has different contact info or uses placeholders, CORRECT I
 
 PROJECT (LATEST VERSION)
 • Title: "${p.title}"
-• Format: ${p.format} · Genre: ${p.genre || "?"} · Stage: ${p.stage}
+• Format: ${p.format} · Genre: ${p.genre || "?"} · Stage: ${p.stage}${ref_scriptStatusLine}${ref_attrsLine}
 • Logline: ${p.logline || "?"}
 • Synopsis: ${p.synopsis || "?"}
 • Themes: ${p.themes || "?"}
 • Team Notes: ${p.teamNotes || "?"}${analysisContext}
-
+${ref_attributeGuidance}
 EXISTING APPLICATION DRAFT:
 ${JSON.stringify(app.content, null, 2)}
 
@@ -2469,12 +2640,15 @@ Respond ONLY with JSON (no markdown):
   const draftCount = apps.filter(a => a.status === "draft").length;
 
   const deadlines = opps.map(o => {
-    const pd = parseDate(o.deadline);
+    // Prefer the verified actualDeadline from Pass 2 over the claimed one from Pass 1
+    const avail = o.verification?.availabilityGate || o.verification?.deadlineGate;
+    const effectiveDeadline = (avail && avail.actualDeadline) || o.deadline;
+    const pd = parseDate(effectiveDeadline);
     const dl = daysLeft(pd);
     const ug = urgency(dl);
     const matchingApp = apps.find(a => a.oppName === o.name);
     const appSt = matchingApp ? matchingApp.status : null;
-    return { ...o, pd, dl, ug, appSt };
+    return { ...o, pd, dl, ug, appSt, effectiveDeadline };
   }).sort((a, b) => {
     if (!a.pd && !b.pd) return 0;
     if (!a.pd) return 1;
@@ -2778,6 +2952,9 @@ Respond ONLY with JSON (no markdown):
             searchError={searchError}
             setSearchError={setSearchError}
             dismissJob={dismissJob}
+            rejectedOpps={rejectedOpps}
+            rejectOpportunity={rejectOpportunity}
+            unrejectOpportunity={unrejectOpportunity}
           />
         )}
         {tab === "dead" && (
@@ -4151,6 +4328,13 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
                     <Bdg>{p.format}</Bdg>
                     <Bdg color={C.pp}>{p.stage}</Bdg>
                     {p.genre && <Bdg color={C.wn}>{p.genre}</Bdg>}
+                    {p.scriptStatus && (() => {
+                      const label = (SCRIPT_STATUS_OPTIONS.find(o => o.key === p.scriptStatus) || {}).label;
+                      return label ? <Bdg color={C.tl}>📝 {label}</Bdg> : null;
+                    })()}
+                    {Array.isArray(p.eligibilityAttributes) && p.eligibilityAttributes.length > 0 && (
+                      <Bdg color={C.ac}>🌟 {p.eligibilityAttributes.length} attr{p.eligibilityAttributes.length === 1 ? "" : "s"}</Bdg>
+                    )}
                   </div>
                 </div>
                 <div style={{
@@ -4200,7 +4384,8 @@ function DiscView({
   searchProjectIdx, setSearchProjectIdx,
   searchFilter, setSearchFilter,
   searchQuery, setSearchQuery,
-  searchError, setSearchError
+  searchError, setSearchError,
+  rejectedOpps, rejectOpportunity, unrejectOpportunity
 }) {
   // Derive busy state and errors from global jobs
   const searchJobs = jobs.filter(j => j.kind === "search");
@@ -4214,6 +4399,9 @@ function DiscView({
   const setSel = setSearchProjectIdx;
   const setFilter = setSearchFilter;
   const setQuery = setSearchQuery;
+
+  // Manage-rejections modal state
+  const [manageRejMdl, setManageRejMdl] = useState(false);
 
   const search = () => {
     if (!projects.length) {
@@ -4348,21 +4536,51 @@ function DiscView({
             if (uncertain > 0) parts.push({ color: C.wn, text: uncertain + " uncertain" });
             if (pending > 0) parts.push({ color: C.tl, text: pending + " verifying" });
             if (unverified > 0) parts.push({ color: C.tm, text: unverified + " unverified" });
+            const rejectedCount = (rejectedOpps || []).length;
             return (
               <div style={{ marginBottom: "14px" }}>
-                <p style={{
-                  fontFamily: FN.m,
-                  fontSize: "11px",
-                  color: C.td,
-                  marginBottom: "4px"
-                }}>{results.length} FOUND · SORTED BY VERIFICATION + MATCH</p>
-                {parts.length > 0 && (
-                  <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", fontSize: "11px", fontFamily: FN.m }}>
-                    {parts.map((p, i) => (
-                      <span key={i} style={{ color: p.color }}>● {p.text}</span>
-                    ))}
+                <div style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: "12px",
+                  flexWrap: "wrap"
+                }}>
+                  <div>
+                    <p style={{
+                      fontFamily: FN.m,
+                      fontSize: "11px",
+                      color: C.td,
+                      marginBottom: "4px"
+                    }}>{results.length} FOUND · SORTED BY VERIFICATION + MATCH</p>
+                    {parts.length > 0 && (
+                      <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", fontSize: "11px", fontFamily: FN.m }}>
+                        {parts.map((p, i) => (
+                          <span key={i} style={{ color: p.color }}>● {p.text}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                )}
+                  {rejectedCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setManageRejMdl(true)}
+                      style={{
+                        background: "transparent",
+                        border: "1px solid " + C.bd,
+                        borderRadius: "4px",
+                        padding: "4px 10px",
+                        fontSize: "11px",
+                        fontFamily: FN.m,
+                        color: C.tm,
+                        cursor: "pointer"
+                      }}
+                      title="Manage rejected opportunities"
+                    >
+                      {rejectedCount} rejected · Manage
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })()}
@@ -4450,6 +4668,24 @@ function DiscView({
                       onClick={() => toggle(o)}
                       style={isSaved(o) ? { color: C.ac } : {}}
                     >{isSaved(o) ? "✓" : "+"}</Btn>
+                    <Btn
+                      variant="ghost"
+                      small
+                      onClick={() => {
+                        if (rejectOpportunity) {
+                          rejectOpportunity(o.name, o.organization, "User rejected from discovery");
+                          // Also remove from current results so it disappears immediately
+                          if (setSearchResults) {
+                            setSearchResults(searchResults.filter(r =>
+                              !((r.name || "").toLowerCase().trim() === (o.name || "").toLowerCase().trim() &&
+                                (r.organization || "").toLowerCase().trim() === (o.organization || "").toLowerCase().trim())
+                            ));
+                          }
+                        }
+                      }}
+                      style={{ color: C.dn }}
+                      title="Don't show this again"
+                    >✕</Btn>
                   </div>
                 </div>
                 <p style={{
@@ -4474,10 +4710,13 @@ function DiscView({
                 </div>
                 {o.verification && o.verification.overallVerdict !== "pending" && (() => {
                   const v = o.verification;
+                  // Normalize legacy field name: old audits used deadlineGate, new use availabilityGate
+                  const availKey = v.availabilityGate ? "availabilityGate" : (v.deadlineGate ? "deadlineGate" : "availabilityGate");
                   const gates = [
                     { key: "stageGate", label: "Stage", icon: "🎬" },
                     { key: "genreGate", label: "Genre / Format", icon: "🎭" },
-                    { key: "demographicGate", label: "Demographic / Thematic", icon: "👥" }
+                    { key: "demographicGate", label: "Demographic / Thematic", icon: "👥" },
+                    { key: availKey, label: "Availability", icon: "📅" }
                   ].filter(g => v[g.key]); // skip nulls
                   const isOk = v.overallVerdict === "verified";
                   const borderCol = isOk ? C.ok : (v.overallVerdict === "uncertain" ? C.wn : C.dn);
@@ -4576,7 +4815,14 @@ function DiscView({
                   flexWrap: "wrap"
                 }}>
                   <span>
-                    <strong style={{ color: C.tx }}>Deadline:</strong> {o.deadline}
+                    <strong style={{ color: C.tx }}>Deadline:</strong> {(() => {
+                      // Prefer verified actualDeadline from Pass 2 availability gate.
+                      // Falls back through legacy deadlineGate and finally the claimed deadline from Pass 1.
+                      const v = o.verification;
+                      const avail = v?.availabilityGate || v?.deadlineGate;
+                      if (avail && avail.actualDeadline) return avail.actualDeadline;
+                      return o.deadline || "unspecified";
+                    })()}
                   </span>
                   {o.amount && o.amount !== "N/A" && (
                     <span>
@@ -4597,6 +4843,78 @@ function DiscView({
           sub="Select a project and search for opportunities."
         />
       )}
+
+      {/* MANAGE REJECTED OPPORTUNITIES MODAL */}
+      <Mdl
+        open={manageRejMdl}
+        onClose={() => setManageRejMdl(false)}
+        title="Rejected Opportunities"
+        width="600px"
+      >
+        <div>
+          <p style={{ fontSize: "13px", color: C.tm, lineHeight: 1.6, marginBottom: "16px" }}>
+            These opportunities won't appear in discovery for any project. Click Undo to allow them to re-surface.
+          </p>
+          {(!rejectedOpps || rejectedOpps.length === 0) ? (
+            <p style={{
+              padding: "16px",
+              background: C.bg,
+              border: "1px solid " + C.bd,
+              borderRadius: "6px",
+              fontSize: "13px",
+              color: C.tm,
+              textAlign: "center"
+            }}>
+              No rejected opportunities.
+            </p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" }}>
+              {rejectedOpps.map((r, i) => (
+                <div key={i} style={{
+                  padding: "10px 12px",
+                  background: C.bg,
+                  border: "1px solid " + C.bd,
+                  borderRadius: "6px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: "10px",
+                  flexWrap: "wrap"
+                }}>
+                  <div style={{ flex: 1, minWidth: "200px" }}>
+                    <p style={{ fontSize: "13px", color: C.tx, marginBottom: "2px" }}>
+                      {r.name}
+                    </p>
+                    <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m }}>
+                      {r.organization}
+                      {r.rejectedAt && " · rejected " + new Date(r.rejectedAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <Btn
+                    variant="ghost"
+                    small
+                    onClick={() => {
+                      if (unrejectOpportunity) {
+                        unrejectOpportunity(r.name, r.organization);
+                      }
+                    }}
+                  >
+                    ↶ Undo
+                  </Btn>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            paddingTop: "12px",
+            borderTop: "1px solid " + C.bd
+          }}>
+            <Btn variant="secondary" onClick={() => setManageRejMdl(false)}>Close</Btn>
+          </div>
+        </div>
+      </Mdl>
     </div>
   );
 }
@@ -5571,10 +5889,13 @@ Artistic Statement | 500 words`}</pre>
     const renderResultItem = (r) => {
       const v = r.verification;
       const vc = v?.overallVerdict === "verified" ? C.ok : v?.overallVerdict === "fail" ? C.dn : C.wn;
+      // Normalize legacy field name
+      const availKey = v?.availabilityGate ? "availabilityGate" : (v?.deadlineGate ? "deadlineGate" : "availabilityGate");
       const gates = [
         { key: "stageGate", label: "Stage" },
         { key: "genreGate", label: "Genre/Format" },
-        { key: "demographicGate", label: "Demographic/Thematic" }
+        { key: "demographicGate", label: "Demographic/Thematic" },
+        { key: availKey, label: "Availability" }
       ].filter(g => v && v[g.key]);
       const stillExists = !!apps.find(a => a.id === r.appId);
       if (!stillExists) return null;
@@ -5608,52 +5929,62 @@ Artistic Statement | 500 words`}</pre>
               <Btn variant="ghost" small onClick={() => openAppDetail(r.appId)}>
                 View app
               </Btn>
-              {v?.overallVerdict === "fail" && v?.stageGate?.verdict === "fail" && (
-                <Btn
-                  variant="teal"
-                  small
-                  onClick={() => {
-                    // Find the project this app is attached to
-                    const app = apps.find(a => a.id === r.appId);
-                    const project = app ? projects.find(p => p.title === app.projTitle) : null;
-                    if (!project) {
-                      alert("Couldn't find the project for this application.");
-                      return;
-                    }
-                    // Open modal in loading state
-                    setSiblingMdl({
-                      appId: r.appId,
-                      oppName: r.oppName,
-                      oppOrg: r.oppOrg,
-                      projTitle: r.projTitle,
-                      project: project,
-                      loading: true,
-                      tracks: [],
-                      error: null
-                    });
-                    // Kick off the sibling search
-                    findSiblingTracks(r.oppName, r.oppOrg, project)
-                      .then(tracks => {
-                        setSiblingMdl(prev => prev && prev.appId === r.appId ? {
-                          ...prev,
-                          loading: false,
-                          tracks: Array.isArray(tracks) ? tracks : [],
-                          error: null
-                        } : prev);
-                      })
-                      .catch(err => {
-                        setSiblingMdl(prev => prev && prev.appId === r.appId ? {
-                          ...prev,
-                          loading: false,
-                          tracks: [],
-                          error: err.message || "Failed to find sibling tracks"
-                        } : prev);
+              {(() => {
+                // Show "Find right track" only when:
+                // - Overall verdict is fail
+                // - Stage gate specifically failed (that's what siblings solve)
+                // - Availability gate did NOT fail (if program is gone or past deadline, siblings don't help)
+                if (v?.overallVerdict !== "fail") return null;
+                if (v?.stageGate?.verdict !== "fail") return null;
+                const availability = v?.availabilityGate || v?.deadlineGate;
+                if (availability?.verdict === "fail") return null;
+                return (
+                  <Btn
+                    variant="teal"
+                    small
+                    onClick={() => {
+                      // Find the project this app is attached to
+                      const app = apps.find(a => a.id === r.appId);
+                      const project = app ? projects.find(p => p.title === app.projTitle) : null;
+                      if (!project) {
+                        alert("Couldn't find the project for this application.");
+                        return;
+                      }
+                      // Open modal in loading state
+                      setSiblingMdl({
+                        appId: r.appId,
+                        oppName: r.oppName,
+                        oppOrg: r.oppOrg,
+                        projTitle: r.projTitle,
+                        project: project,
+                        loading: true,
+                        tracks: [],
+                        error: null
                       });
-                  }}
-                >
-                  🔎 Find right track
-                </Btn>
-              )}
+                      // Kick off the sibling search
+                      findSiblingTracks(r.oppName, r.oppOrg, project)
+                        .then(tracks => {
+                          setSiblingMdl(prev => prev && prev.appId === r.appId ? {
+                            ...prev,
+                            loading: false,
+                            tracks: Array.isArray(tracks) ? tracks : [],
+                            error: null
+                          } : prev);
+                        })
+                        .catch(err => {
+                          setSiblingMdl(prev => prev && prev.appId === r.appId ? {
+                            ...prev,
+                            loading: false,
+                            tracks: [],
+                            error: err.message || "Failed to find sibling tracks"
+                          } : prev);
+                        });
+                    }}
+                  >
+                    🔎 Find right track
+                  </Btn>
+                );
+              })()}
               {v?.overallVerdict === "fail" && (
                 <Btn variant="danger" small onClick={() => deleteApp(r.appId)}>
                   Delete draft
@@ -6367,10 +6698,13 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
         {app.auditResult && !app.auditFlagDismissed && (app.auditResult.overallVerdict === "fail" || app.auditResult.overallVerdict === "uncertain") && (() => {
           const isFail = app.auditResult.overallVerdict === "fail";
           const bc = isFail ? C.dn : C.wn;
+          // Normalize legacy field name
+          const availKey = app.auditResult.availabilityGate ? "availabilityGate" : (app.auditResult.deadlineGate ? "deadlineGate" : "availabilityGate");
           const gates = [
             { key: "stageGate", label: "Stage" },
             { key: "genreGate", label: "Genre/Format" },
-            { key: "demographicGate", label: "Demographic/Thematic" }
+            { key: "demographicGate", label: "Demographic/Thematic" },
+            { key: availKey, label: "Availability" }
           ].filter(g => app.auditResult[g.key]);
           return (
             <Card style={{
