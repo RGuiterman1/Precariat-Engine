@@ -26,7 +26,8 @@ const DEF_PROFILE = {
   contactName: "Ryan Guiterman",
   credits: "Canvas (2021) - Animated Horror - Annecy, Gravitas Ventures\nLoud & Longing (2023) - Drama/Thriller - Lighthouse IFF, Gravitas Ventures\nFor Marta (Short Film)",
   specialties: "Animation, Horror, Genre Films, VFX, AI Technology, Independent Film",
-  connectedAccounts: []  // [{ name, identifier, url, notes }]
+  connectedAccounts: [],  // [{ name, identifier, url, notes }]
+  voiceDirectiveEnabled: true  // Apply Ryan's voice profile to generated apps. Default on.
 };
 
 const DEF_PAY = {
@@ -88,6 +89,48 @@ const SCRIPT_STATUS_OPTIONS = [
   { key: "polished",    label: "Completed and polished" },
   { key: "locked",      label: "Locked shooting script" }
 ];
+
+// VOICE DIRECTIVE — condensed from Ryan Guiterman's Voice Profile v1.1.
+// Injected into every Generate/Regenerate/Augment prompt when the user
+// has voice mode enabled (default: on). The full Voice Profile lives in
+// Ryan_Guiterman_Voice_Profile_v1.1.docx as a standalone reference document.
+//
+// This condensed version captures the operational rules — the "what to do"
+// and "what to avoid" — without requiring the model to process the whole
+// 2700-word profile on every call.
+const VOICE_DIRECTIVE = `═══════════════════════════════════════════════════════════
+🎙 WRITING VOICE — NON-NEGOTIABLE
+═══════════════════════════════════════════════════════════
+You are writing in Ryan Guiterman's voice, not a generic grant voice. Every sentence must pass the following filters.
+
+THE ARTISTIC ETHIC:
+"I don't like when things are unearned, either in life or in language — but when something is earned, there are very few things that move me more." Every strong word must pay its own rent. A reach for elevated language is fine if the argument earns it; reaching for effect without substance is a violation.
+
+REGISTER:
+This is a blend of formal (Director's Statement register) and professional-relational (industry email register). Architectural and spare in structure, but warm and specific in voice. One idea per short paragraph. No connective tissue like "furthermore" or "additionally." Reaches for slightly elevated vocabulary (complicity, rectify, myriad) when the material earns it.
+
+BANNED WORDS — never use these, they are AI tells and grant-speak:
+compelling, timely, vital, transformative, resonates, navigates, explores, delves into, tapestry, landscape, journey, powerful, profound, meaningful, thought-provoking, visceral, nuanced, at its core, multifaceted, amazing, incredible, in this cultural moment, especially relevant today, my truth, my voice, my perspective as a filmmaker.
+
+REPLACE HEDGING — "seeks to explore" becomes "explores"; "aims to" becomes "does"; "attempts to" becomes "does."
+
+WHEN DESCRIBING HORROR/FEAR: use physical language. "Crawls through the audience's spines," "makes their heart rates rise," "jolts them in the theater," "keeps the lights on at home." Fear is a thing happening in bodies, not an abstract emotional state. If the opportunity is a horror project, the honest word is SCARY — own it, not "unsettling" or "atmospheric."
+
+WHAT MUST NEVER APPEAR:
+- Aspirational casting not yet attached (e.g., don't name actors unless confirmed attached).
+- Filmmaker's political identity or personal political positions, unless the specific opportunity requires political disclosure.
+- Personal vulnerabilities framed as credentials (mental health history, personal trauma, etc. — thematic outcomes of lived experience are fine, biography deployed as credential is not).
+- Fad-chasing language ("timely," "in this cultural moment," "especially relevant today"). The film's relevance is permanent, not seasonal.
+- Pre-feature résumé recitation when the application is for a feature filmmaker. Assume the jury knows the filmmaker's feature credits unless specifically asked.
+
+SENTINEL CHECKS — before finalizing, verify:
+1. Every strong word earns its place.
+2. Claims are anchored to specific scenes, institutions, or collaborators — not vague gestures.
+3. No soft-relativist framing ("my truth," "my perspective").
+4. No pre-apologies, no hedges, no performed modesty.
+5. No sentence performs an effect instead of substantiating it.
+6. No aspirational casting, no unrelated political content, no biography deployed as credential.
+7. If reading aloud would make Ryan wince, rewrite it.`;
 
 const C = {
   bg: "#0a0a0c", sf: "#131318", bd: "#222230", bl: "#2a2a3a",
@@ -1262,11 +1305,11 @@ Be brutally specific to THIS project and THIS team only. No generic advice. Rese
       : filter.toLowerCase();
 
     const stageRules = {
-      "Development": "Return opportunities for projects in the DEVELOPMENT phase (script-focused, not yet in production). This includes: screenwriting grants, script development funds, writers labs, development fellowships, screenplay competitions, early-stage incubators, and development residencies. These typically want a COMPLETED or polished screenplay (see the project's Script Status if declared). DO NOT return film festivals (which require finished films), completed-film awards, distribution grants, post-production funds, or anything requiring an existing cut or finished work.",
-      "Pre-Production": "Only return opportunities that accept projects in PRE-PRODUCTION (script is locked, preparing to shoot). This includes: production financing grants, pre-production labs, production fellowships, producer labs, and packaging/financing programs. DO NOT return completed-film festivals, post-production funds, or development-only grants.",
-      "Production": "Only return opportunities that accept projects currently IN PRODUCTION (actively shooting). This includes: production grants, in-progress financing, and labs accepting projects mid-production. DO NOT return completed-film festivals, development-only grants, or post-production funds.",
-      "Post-Production": "Only return opportunities that accept projects in POST-PRODUCTION (shot but not finished). This includes: finishing funds, post-production grants, work-in-progress showcases, rough-cut labs, and WIP festivals. DO NOT return completed-film festivals requiring a locked final cut (unless they have a WIP section), development grants, or production-only funds.",
-      "Completed": "Only return opportunities for FINISHED films. This includes: film festivals (premiere and subsequent), distribution grants, completed-film awards, and release support programs. DO NOT return development grants, production funds, or opportunities requiring in-progress work."
+      "Development": "Return opportunities for projects in the DEVELOPMENT phase (script-focused, not yet in production). This includes: screenwriting grants, script development funds, writers labs, development fellowships, screenplay competitions, early-stage incubators, development residencies, and packaging/financing programs that help move a script toward production. These typically want a COMPLETED or polished screenplay (see the project's Script Status if declared).\n\nSERVICE-FIT EXCLUSIONS — DO NOT return programs whose offered SERVICE cannot be used by a development-stage project:\n• Equipment support / camera packages / lighting grants (these help productions that are actively shooting, not scripts in development — the project has no use for cameras if it isn't shooting)\n• Post-production services (sound mix, color, finishing, VFX finishing) — a development-stage project has nothing to post-produce\n• Distribution grants, festival submission fee waivers, release support — nothing to distribute or release yet\n• Film festivals that require finished films\n• Completed-film awards, jury prizes for finished features\n• Production insurance discount programs, crew training on-set — these require an active shoot\n• Film stock grants, raw stock donations — require filming in progress\nThe test: 'can a film with only a screenplay and no footage meaningfully USE what this program provides?' If no, exclude it.",
+      "Pre-Production": "Only return opportunities that accept projects in PRE-PRODUCTION (script is locked, preparing to shoot, crew assembling). This includes: production financing grants, pre-production labs, production fellowships, producer labs, packaging/financing programs, casting labs, and pre-production insurance/legal support.\n\nSERVICE-FIT EXCLUSIONS — DO NOT return:\n• Development-only grants / script labs (the script is already locked, past that phase)\n• Post-production services (no footage yet)\n• Distribution grants, festival submission support (no film to distribute)\n• Completed-film festivals\n• Equipment support that requires an active shoot date that isn't yet set",
+      "Production": "Only return opportunities that accept projects currently IN PRODUCTION (actively shooting). This includes: production grants, in-progress financing, equipment and location support for active shoots, labs accepting projects mid-production, and production insurance.\n\nSERVICE-FIT EXCLUSIONS — DO NOT return:\n• Development-only grants or script labs\n• Post-production services (wait until footage exists)\n• Distribution grants\n• Completed-film festivals\n• Pre-production-only labs",
+      "Post-Production": "Only return opportunities that accept projects in POST-PRODUCTION (shot but not finished). This includes: finishing funds, post-production grants, work-in-progress showcases, rough-cut labs, WIP festivals, sound/color/VFX finishing grants, and editor/post-production residencies.\n\nSERVICE-FIT EXCLUSIONS — DO NOT return:\n• Development grants, script labs\n• Pre-production or production-only grants (past those phases)\n• Distribution grants requiring a finished, locked cut (unless they accept WIP)\n• Completed-film festivals requiring a final cut (unless they have a WIP section)\n• Equipment support for shoots",
+      "Completed": "Only return opportunities for FINISHED films with a locked final cut. This includes: film festivals (premiere and subsequent), distribution grants, completed-film awards, theatrical/streaming release support, publicity/marketing grants for released films, and impact campaigns.\n\nSERVICE-FIT EXCLUSIONS — DO NOT return:\n• Development grants, script labs\n• Pre-production, production, or post-production grants (all past phases)\n• Equipment support\n• Finishing funds\n• Opportunities explicitly requiring in-progress work (these want unfinished work, not completed)"
     };
 
     const stageRule = stageRules[p.stage] || "Match opportunities appropriate to the project's current stage.";
@@ -1552,7 +1595,7 @@ Find 12-18 real opportunities with CURRENT, FUTURE deadlines. The verification p
     const verifyTodayISO = new Date().toISOString().slice(0, 10);
     const candidateDeadline = candidate.deadline || "(not provided)";
 
-    const prompt = `You are verifying whether a specific film opportunity is a genuine fit for a specific project. You will evaluate FOUR gates and return structured JSON with evidence.
+    const prompt = `You are verifying whether a specific film opportunity is a genuine fit for a specific project. You will evaluate FIVE gates and return structured JSON with evidence.
 
 📅 TODAY'S DATE: ${verifyTodayReadable} (${verifyTodayISO})
 
@@ -1627,7 +1670,7 @@ When evaluating this opportunity: "${candidate.name}" at "${candidate.organizati
 ═══════════════════════════════════════════
 YOUR TASK
 ═══════════════════════════════════════════
-Use web search to find the opportunity's official eligibility / submission guidelines page for THIS SPECIFIC TRACK. Read it carefully. Then evaluate FOUR gates:
+Use web search to find the opportunity's official eligibility / submission guidelines page for THIS SPECIFIC TRACK. Read it carefully. Then evaluate FIVE gates:
 
 GATE 1 — STAGE:
 Does this opportunity explicitly accept projects at the "${project.stage}" stage ${scriptStatusLabel ? "with script status \"" + scriptStatusLabel + "\"" : ""}? Apply the STAGE TERMINOLOGY guidance above. Look for language in THIS specific track's guidelines like "must be a completed feature," "screenplays in development only," "accepting rough cuts," "projects entering post-production," etc.
@@ -1659,6 +1702,33 @@ Verdicts:
 - UNCERTAIN: You can't clearly determine the status from the guidelines page.
 
 The candidate claimed the deadline is "${candidateDeadline}". VERIFY THIS CLAIM. If the candidate said "rolling" but the guidelines actually show an annual deadline that has passed, FAIL. If the candidate lists a program that FAQ/guidelines say is discontinued, FAIL. If the candidate provided a specific date, verify it matches what the guidelines currently show.
+
+GATE 5 — SERVICE-STAGE FIT:
+Does the SERVICE this program offers actually help a project at the "${project.stage}" stage? This is NOT about whether the applicant is eligible — that's stage gate. This is about whether the program's OFFERED HELP matches what a project at this stage actually needs.
+
+The test to apply: "If this project won this opportunity right now, at its current stage, could it meaningfully USE what the program provides?"
+
+Examples of service-stage MISMATCH (these should FAIL this gate even if the stage gate passes):
+- An equipment-support program (cameras, lighting, production gear) awarded to a Development-stage project. The project has no shoot date and no use for production gear. Even if the program "accepts" indie features in a general sense, a screenplay cannot use cameras.
+- A post-production finishing fund awarded to a Development-stage project. Nothing to post-produce.
+- A distribution grant awarded to a Development or Production-stage project. Nothing finished to distribute.
+- A script development lab awarded to a Completed-stage project. The script is finished and the film is made — the lab's service is past.
+- A publicity/marketing grant for released films, awarded to a film in pre-production. No film to publicize yet.
+- A production insurance grant to a development-stage project with no shoot scheduled.
+
+Examples of service-stage FIT (these PASS this gate):
+- A screenwriting fellowship for a Development-stage project with a completed screenplay.
+- A production financing grant for a Pre-Production or Production-stage project.
+- A finishing fund for a Post-Production project with rough cut.
+- A distribution grant for a Completed film.
+- A packaging/financing program for a Development-stage project preparing for production.
+
+Verdicts:
+- PASS: The program's offered service (funding type, equipment, post-production, distribution, mentorship, lab experience, etc.) is something a "${project.stage}"-stage project can actually USE right now.
+- FAIL: The program's service is fundamentally tied to a different stage of filmmaking — the project cannot meaningfully use it at its current stage. Name WHICH service/stage mismatch in the evidence.
+- UNCERTAIN: You can't clearly determine what service the program provides, or the program's scope is unclear.
+
+For the evidence, quote the program's description of its offered service (e.g., "provides free camera packages for films shooting on 16mm"). For the concern field, state the mismatch plainly (e.g., "Program offers production equipment. Project is in development stage with no shoot date — cannot use equipment").
 
 ═══════════════════════════════════════════
 RULES — READ CAREFULLY
@@ -1697,14 +1767,21 @@ Respond ONLY with JSON (no markdown, no commentary):
     "failureType": "'past-deadline' | 'discontinued' | 'on-hold' | null — null when verdict is pass or uncertain",
     "actualDeadline": "the real deadline or status — e.g., 'April 2, 2026 at 3pm ET (already passed, next cycle not yet announced)' or 'March 15, 2027' or 'truly rolling — no fixed deadline' or 'Discontinued: fellowship no longer offered per 2026 FAQ' or 'On hold pending funding'"
   },
+  "serviceFitGate": {
+    "verdict": "pass" | "fail" | "uncertain",
+    "evidence": "exact phrase from guidelines describing the service/help the program offers (e.g., 'free camera packages for films shooting on 16mm', 'development funding up to $50k for screenplays', 'theatrical release support')",
+    "sourceUrl": "URL",
+    "concern": "if fail: state the stage-service mismatch plainly (e.g., 'Program offers production equipment. Project is in development stage with no shoot date — cannot use equipment'). Empty if pass.",
+    "offeredService": "what the program actually provides (e.g., 'script development funding', 'post-production finishing', 'equipment', 'distribution support', 'mentorship + lab residency')"
+  },
   "overallVerdict": "verified" | "fail" | "uncertain"
 }
 
 If there is a demographic/thematic gate, replace null with the same object shape as the other gates.
 
 overallVerdict rules:
-- "verified" if all non-null gates (including availabilityGate) return "pass"
-- "fail" if ANY gate returns "fail" — INCLUDING availabilityGate. A closed or discontinued opportunity is a definitive fail.
+- "verified" if all non-null gates (including availabilityGate and serviceFitGate) return "pass"
+- "fail" if ANY gate returns "fail" — INCLUDING availabilityGate or serviceFitGate. A closed, discontinued, or stage-service-mismatched opportunity is a definitive fail.
 - "uncertain" if no gate fails but at least one gate is "uncertain"`;
 
     const response = await askClaude(prompt, true); // use web search
@@ -1718,7 +1795,8 @@ overallVerdict rules:
         stageGate: null,
         genreGate: null,
         demographicGate: null,
-        availabilityGate: null
+        availabilityGate: null,
+        serviceFitGate: null
       };
     }
 
@@ -1730,8 +1808,8 @@ overallVerdict rules:
     // Ensure overallVerdict is present and valid
     const validVerdicts = ["verified", "fail", "uncertain"];
     if (!validVerdicts.includes(result.overallVerdict)) {
-      // Derive from gates if missing (include availabilityGate)
-      const gates = [result.stageGate, result.genreGate, result.demographicGate, result.availabilityGate].filter(g => g && g.verdict);
+      // Derive from gates if missing (include availabilityGate and serviceFitGate)
+      const gates = [result.stageGate, result.genreGate, result.demographicGate, result.availabilityGate, result.serviceFitGate].filter(g => g && g.verdict);
       if (gates.some(g => g.verdict === "fail")) result.overallVerdict = "fail";
       else if (gates.every(g => g.verdict === "pass") && gates.length > 0) result.overallVerdict = "verified";
       else result.overallVerdict = "uncertain";
@@ -1977,7 +2055,11 @@ Return 0-5 tracks. Quality over quantity. If no sibling tracks fit, return [].`;
         ? `\n• Eligibility Attributes: ${gen_attrLabels.join(", ")}`
         : "";
 
+      // Voice directive — inject if profile has it enabled
+      const gen_voiceBlock = (prof.voiceDirectiveEnabled !== false) ? ("\n\n" + VOICE_DIRECTIVE + "\n") : "";
+
       const textPrompt = `You are a world-class grant writer and application strategist who has helped films win Sundance, Tribeca, Cinereach, SFFILM, Sundance Institute labs, and dozens of major grants. Your success rate is extraordinary because you NEVER write generic applications — every single submission is meticulously tailored to the specific opportunity's values, voice, aesthetic preferences, selection criteria, and the unique things their committees respond to.
+${gen_voiceBlock}
 
 ═══════════════════════════════════════════════════════════
 YOUR TASK: Write a hand-tailored application for a SPECIFIC opportunity.
@@ -2348,9 +2430,13 @@ No generic language. No boilerplate. Only write what's actually asked for. Every
         ? `\n${ref_scriptStatusLabel ? `📝 Script Status "${ref_scriptStatusLabel}" — a completed/polished script is READY for labs/competitions, don't undersell with vague "in development" language.\n` : ""}${ref_attrLabels.length > 0 ? `🌟 Declared attributes: ${ref_attrLabels.join(", ")}. Foreground these authentically when the opportunity aligns.\n` : ""}`
         : "";
 
+      // Voice directive — inject if profile has it enabled
+      const ref_voiceBlock = (prof.voiceDirectiveEnabled !== false) ? ("\n\n" + VOICE_DIRECTIVE + "\n") : "";
+
       let textPrompt;
       if (mode === "regenerate") {
         textPrompt = `You are a world-class grant writer and application strategist. Your success rate is extraordinary because you NEVER write generic applications — every submission is meticulously tailored to the specific opportunity's values, voice, aesthetic, and selection criteria.
+${ref_voiceBlock}
 
 ═══════════════════════════════════════════════════════════
 TASK: REGENERATE a hand-tailored application from scratch using the LATEST project intelligence.
@@ -2463,6 +2549,7 @@ FINAL SELF-CHECK: Before returning, verify every formFieldsFound entry has corre
       } else {
         // Augment mode: surgical update preserving tone and user edits
         textPrompt = `You are a world-class grant writer reviewing an existing application draft against UPDATED project intelligence. The team has new information (new collaborator attached, updated budget, revised script, new credits, etc.). You must decide what — if anything — in the application should be updated.
+${ref_voiceBlock}
 
 ═══════════════════════════════════════════════════════════
 OPPORTUNITY
@@ -4716,7 +4803,8 @@ function DiscView({
                     { key: "stageGate", label: "Stage", icon: "🎬" },
                     { key: "genreGate", label: "Genre / Format", icon: "🎭" },
                     { key: "demographicGate", label: "Demographic / Thematic", icon: "👥" },
-                    { key: availKey, label: "Availability", icon: "📅" }
+                    { key: availKey, label: "Availability", icon: "📅" },
+                    { key: "serviceFitGate", label: "Service Fit", icon: "🎯" }
                   ].filter(g => v[g.key]); // skip nulls
                   const isOk = v.overallVerdict === "verified";
                   const borderCol = isOk ? C.ok : (v.overallVerdict === "uncertain" ? C.wn : C.dn);
@@ -5895,7 +5983,8 @@ Artistic Statement | 500 words`}</pre>
         { key: "stageGate", label: "Stage" },
         { key: "genreGate", label: "Genre/Format" },
         { key: "demographicGate", label: "Demographic/Thematic" },
-        { key: availKey, label: "Availability" }
+        { key: availKey, label: "Availability" },
+        { key: "serviceFitGate", label: "Service Fit" }
       ].filter(g => v && v[g.key]);
       const stillExists = !!apps.find(a => a.id === r.appId);
       if (!stillExists) return null;
@@ -6523,8 +6612,11 @@ Artistic Statement | 500 words`}</pre>
       if (!currentText) return;
       setHumanizingKey(sectionKey);
       try {
-        const prompt = `You are rewriting a grant application section to remove any AI-detection tells. The reviewer may use AI-detection tools or simply have a trained ear for machine-generated prose. Your job is to rewrite this section so it reads as genuinely human-written while preserving ALL the factual content and strategic emphasis of the original.
+        // Voice directive — inject if profile has it enabled
+        const hum_voiceBlock = (profile.voiceDirectiveEnabled !== false) ? ("\n\n" + VOICE_DIRECTIVE + "\n") : "";
 
+        const prompt = `You are rewriting a grant application section to remove any AI-detection tells AND to bring the prose fully into the filmmaker's voice. The reviewer may use AI-detection tools or simply have a trained ear for machine-generated prose. Your job is to rewrite this section so it reads as genuinely human-written AND in the filmmaker's specific voice — preserving ALL the factual content and strategic emphasis of the original.
+${hum_voiceBlock}
 SECTION TITLE: ${sectionTitle}
 CURRENT TEXT:
 ${currentText}
@@ -6538,6 +6630,7 @@ REWRITE MANDATES:
 6. Cut filler. Every word must earn its place.
 7. DO NOT change the substantive content, strategic emphasis, or factual claims. Preserve all references to team members, credits, and specific project details.
 8. DO NOT make it longer. Tighter is better.
+${profile.voiceDirectiveEnabled !== false ? `9. APPLY THE VOICE DIRECTIVE ABOVE. If the current text uses the wrong register (e.g., Hollywood-producer-deck swagger like "speed dial," "sweet spot," "butts in seats," or commercial-buzzy phrases), rewrite it in the register the voice directive specifies — a blend of formal Director's Statement and professional-relational registers. Run every rewritten sentence through the seven sentinel checks before finalizing.` : ""}
 
 Respond with ONLY the rewritten text. No preamble, no explanation, no quotes around it, no markdown. Just the rewritten section.`;
 
@@ -6704,7 +6797,8 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
             { key: "stageGate", label: "Stage" },
             { key: "genreGate", label: "Genre/Format" },
             { key: "demographicGate", label: "Demographic/Thematic" },
-            { key: availKey, label: "Availability" }
+            { key: availKey, label: "Availability" },
+            { key: "serviceFitGate", label: "Service Fit" }
           ].filter(g => app.auditResult[g.key]);
           return (
             <Card style={{
@@ -9071,6 +9165,62 @@ function ProfView({ profile, save }) {
             }}>✓ Saved</span>
           )}
           <Btn onClick={doSave}>Save All</Btn>
+        </div>
+      </Card>
+
+      {/* WRITING VOICE — toggle to apply voice directive to generated apps */}
+      <Card style={{ marginTop: "20px", borderColor: C.ac + "40" }}>
+        <div style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "16px",
+          flexWrap: "wrap"
+        }}>
+          <div style={{ flex: 1, minWidth: "240px" }}>
+            <h3 style={{
+              fontFamily: FN.d,
+              fontSize: "20px",
+              fontStyle: "italic",
+              marginBottom: "6px"
+            }}>🎙 Writing Voice</h3>
+            <p style={{ fontSize: "13px", color: C.tx, lineHeight: 1.6, marginBottom: "8px" }}>
+              <strong>Apply Ryan's voice profile to generated applications</strong>
+            </p>
+            <p style={{ fontSize: "12px", color: C.tm, lineHeight: 1.5, marginBottom: "10px" }}>
+              When on, every application the engine writes or rewrites (Generate, Regenerate, Augment, and Humanize) follows the voice rules: earned language, register calibration, banned grant-speak, and sentinel checks from Voice Profile v1.1. Turn off for collaborators with different voices, or when you want a more generic commercial register.
+            </p>
+            <p style={{ fontSize: "11px", color: C.td, fontStyle: "italic" }}>
+              Based on Voice Profile v1.1. The full profile document is a separate reference.
+            </p>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
+            <button
+              type="button"
+              onClick={() => {
+                const next = !(form.voiceDirectiveEnabled !== false); // current resolved state → flip
+                setForm({ ...form, voiceDirectiveEnabled: next });
+              }}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "20px",
+                fontFamily: FN.m,
+                fontSize: "12px",
+                fontWeight: 600,
+                border: "1px solid " + ((form.voiceDirectiveEnabled !== false) ? C.ac : C.bd),
+                background: (form.voiceDirectiveEnabled !== false) ? C.ac + "25" : "transparent",
+                color: (form.voiceDirectiveEnabled !== false) ? C.ac : C.tm,
+                cursor: "pointer",
+                minWidth: "80px",
+                transition: "all 0.15s"
+              }}
+            >
+              {(form.voiceDirectiveEnabled !== false) ? "✓ ON" : "OFF"}
+            </button>
+            <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m }}>
+              Click Save All below to persist
+            </p>
+          </div>
         </div>
       </Card>
 
