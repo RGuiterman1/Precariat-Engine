@@ -612,6 +612,66 @@ function daysLeft(date) {
   return Math.ceil((t - now) / 86400000);
 }
 
+// checkDeadlineStatus — deterministic JavaScript date classification.
+// Takes any deadline text and returns a structured status used by the
+// availability verification layer. This removes arithmetic from the LLM's
+// job — JS does the math, the LLM only answers "is this program active?"
+//
+// Returns one of:
+//   { status: "future", date: Date, daysUntil: number, originalText: string }
+//   { status: "past",   date: Date, daysAgo:   number, originalText: string }
+//   { status: "rolling",                               originalText: string }
+//   { status: "unparseable",                           originalText: string }
+function checkDeadlineStatus(deadlineString) {
+  const originalText = deadlineString || "";
+  if (!originalText || !originalText.trim()) {
+    return { status: "unparseable", originalText };
+  }
+  const lower = originalText.toLowerCase().trim();
+
+  // Rolling detection — explicit language indicating no fixed deadline
+  const rollingMarkers = [
+    "rolling",
+    "ongoing",
+    "continuous",
+    "year-round",
+    "year round",
+    "always open",
+    "accepts applications at any time",
+    "no deadline"
+  ];
+  if (rollingMarkers.some(m => lower === m || lower.startsWith(m + " ") || lower.includes(" " + m))) {
+    return { status: "rolling", originalText };
+  }
+
+  // Try to parse via existing parseDate (handles messy formats)
+  const parsed = parseDate(originalText);
+  if (!parsed) {
+    return { status: "unparseable", originalText };
+  }
+
+  // Compare to today at start of day, both UTC-aligned
+  const now = new Date();
+  const startOfTodayMs = new Date(now.toISOString().slice(0, 10)).getTime();
+  const parsedMs = parsed.getTime();
+  const oneDayMs = 86400000;
+
+  if (parsedMs >= startOfTodayMs) {
+    return {
+      status: "future",
+      date: parsed,
+      daysUntil: Math.ceil((parsedMs - startOfTodayMs) / oneDayMs),
+      originalText
+    };
+  }
+  return {
+    status: "past",
+    date: parsed,
+    daysAgo: Math.floor((startOfTodayMs - parsedMs) / oneDayMs),
+    originalText
+  };
+}
+
 function urgency(days) {
   if (days === null) return { label: "TBD", color: C.td };
   if (days < 0) return { label: "PAST", color: C.dn };
@@ -1513,20 +1573,16 @@ Find 12-18 real opportunities with CURRENT, FUTURE deadlines. The verification p
         // Filter out candidates whose deadline has already passed.
         // Handles common formats: "June 15, 2026", "2026-06-15", "rolling", "ongoing".
         // When parsing fails, we keep the opp (uncertain — let verification handle it).
-        const nowMs = Date.now();
-        const startOfTodayMs = new Date(new Date().toISOString().slice(0, 10)).getTime();
-        const isDeadlineValid = (deadlineStr) => {
-          if (!deadlineStr) return true; // no deadline → keep
-          const s = String(deadlineStr).toLowerCase().trim();
-          if (!s || s === "rolling" || s === "ongoing" || s === "continuous" || s.includes("rolling") || s.includes("tbd") || s.includes("unknown")) return true;
-          const parsed = new Date(deadlineStr);
-          if (isNaN(parsed.getTime())) return true; // unparseable → keep
-          return parsed.getTime() >= startOfTodayMs;
-        };
+        // This uses the same checkDeadlineStatus function as Pass 2, so both passes
+        // agree on what "past" means.
         const freshCandidates = dedupedCandidates.filter(o => {
-          if (isDeadlineValid(o.deadline)) return true;
-          console.log("Discovery: dropped past-deadline opp:", o.name, "(deadline:", o.deadline, ")");
-          return false;
+          const status = checkDeadlineStatus(o.deadline);
+          // Keep: future, rolling, unparseable. Drop only definitive past.
+          if (status.status === "past") {
+            console.log("Discovery: dropped past-deadline opp:", o.name, "(deadline:", o.deadline, ", " + status.daysAgo + " days ago)");
+            return false;
+          }
+          return true;
         });
         const droppedPastDeadline = dedupedCandidates.length - freshCandidates.length;
 
@@ -1625,6 +1681,21 @@ Find 12-18 real opportunities with CURRENT, FUTURE deadlines. The verification p
     const verifyTodayISO = new Date().toISOString().slice(0, 10);
     const candidateDeadline = candidate.deadline || "(not provided)";
 
+    // JavaScript has already done the date math. The model will read this,
+    // not re-do arithmetic. This removes a whole class of availability failures
+    // caused by LLM date-comparison errors.
+    const deadlineStatus = checkDeadlineStatus(candidate.deadline);
+    let deadlineContextForPrompt = "";
+    if (deadlineStatus.status === "future") {
+      deadlineContextForPrompt = `JS DATE CHECK: The candidate's claimed deadline ("${candidateDeadline}") parses to ${deadlineStatus.date.toISOString().slice(0, 10)}, which is ${deadlineStatus.daysUntil} days from now. The deadline is IN THE FUTURE. Do not re-do this math. Your job is only to verify the program is currently active on its own site.`;
+    } else if (deadlineStatus.status === "past") {
+      deadlineContextForPrompt = `JS DATE CHECK: The candidate's claimed deadline ("${candidateDeadline}") parses to ${deadlineStatus.date.toISOString().slice(0, 10)}, which was ${deadlineStatus.daysAgo} days ago. That specific date has passed. However, this does NOT automatically mean the program is closed — the program may have a newer cycle announced. Your job is to check the program's own official site to see if a future cycle exists or if the program is genuinely closed/discontinued.`;
+    } else if (deadlineStatus.status === "rolling") {
+      deadlineContextForPrompt = `JS DATE CHECK: The candidate's claimed deadline ("${candidateDeadline}") indicates a ROLLING/CONTINUOUS intake. Your job is only to verify this claim — check the program's own official site for language confirming rolling intake.`;
+    } else {
+      deadlineContextForPrompt = `JS DATE CHECK: The candidate's claimed deadline ("${candidateDeadline}") could not be parsed into a specific date. Your job is to find the current deadline on the program's own official site.`;
+    }
+
     const prompt = `You are verifying whether a specific film opportunity is a genuine fit for a specific project. You will evaluate FIVE gates and return structured JSON with evidence.
 
 📅 TODAY'S DATE: ${verifyTodayReadable} (${verifyTodayISO})
@@ -1716,80 +1787,45 @@ Does this opportunity have a demographic or thematic eligibility requirement (e.
 - Only fail if the opportunity clearly requires an attribute the project explicitly cannot satisfy (e.g., opportunity requires "first-time filmmaker only" and the project team has prior credits visible in the materials).
 
 GATE 4 — AVAILABILITY:
-Is this opportunity CURRENTLY AVAILABLE for submissions as of ${verifyTodayReadable}?
+JavaScript has already done the date arithmetic for you. Do NOT re-check dates or compare months. Your job is narrower: given the JS date check below, determine whether the program is currently active on its own official site.
 
-🚨 SOURCE HIERARCHY — READ THIS BEFORE EVALUATING:
-Different sources on the web can contradict each other. A 2025 Submittable archive page will list 2025 deadlines as "the deadline." A 2025 aggregator blog post will repeat 2025 dates. Meanwhile the program's OFFICIAL HOMEPAGE may show a current 2026 cycle clearly. You MUST seek the authoritative source before making a verdict.
+${deadlineContextForPrompt}
 
-AUTHORITATIVE SOURCES (in order of preference):
-1. The program's OWN OFFICIAL HOMEPAGE or program page (e.g., filmindependent.org/programs/...)
-2. The program's official application page on its own domain
-3. The program's official FAQ or guidelines page on its own domain
+YOUR TASK:
+Use web search to find the program's OFFICIAL OWN site — not Submittable archives, not aggregators like fundsforngos.org, not third-party blog listings. The program's own domain (filmindependent.org, sundance.org, gothamfilm.org, etc.) is authoritative. Check whether the program is currently accepting applications.
 
-NON-AUTHORITATIVE / STALE SOURCES (do not trust these for deadline verification):
-- Submittable archive pages from past cycles (URLs containing "submittable.com/submit/..." with past-year context)
-- Third-party aggregator sites (fundsforngos.org, us.fundsforngos.org, contemporaryperformance.com, filmfreeway submission archives, nyff.org listings, etc.) — these often list past-cycle info
-- Blog posts from 2024 or 2025 listing "current opportunities"
-- Cached versions of past cycles
+RULES FOR SOURCE SELECTION:
+- Authoritative: the program's own official domain (.org or company site)
+- Non-authoritative: Submittable archives (submittable.com/...), aggregators (fundsforngos.org, contemporaryperformance.com, us.fundsforngos.org, etc.), third-party blog posts
+- If you can only find the program on a non-authoritative source, return UNCERTAIN with concern text explaining you couldn't verify via the official site
 
-RULE: If you find information ONLY on a non-authoritative source that conflicts with what an authoritative source says, the authoritative source wins. If you find information ONLY on a non-authoritative source and cannot verify via the program's own site, return UNCERTAIN — not FAIL.
+VERDICTS BY JS DATE STATUS:
 
-RULE: You MUST name the sourceUrl in your evidence. If the URL is a Submittable archive, aggregator, or third-party listing, explicitly acknowledge this in the "concern" field: "Evidence found only on non-authoritative source [X]; unable to verify on program's official site." In such cases the verdict should be UNCERTAIN.
+If JS says FUTURE:
+- PASS when the program's own site confirms the program is active (any active program page, current application info, or doesn't say closed).
+- UNCERTAIN when you can't find the program's own site, OR the site is ambiguous, OR you found the program only on non-authoritative sources.
+- FAIL only when the program's OWN site explicitly says the program is discontinued, shut down, or on permanent hiatus. (This is rare for an opportunity with a future deadline — if the date is future but the program is closed, this is a contradiction worth noting.)
 
-RULE: Before concluding a program has closed or discontinued, you MUST check the program's own official homepage. If the homepage shows an active program page (not a "program ended" page), and you cannot find an explicit discontinuation/past-deadline-no-future-cycle statement there, return UNCERTAIN.
+If JS says PAST:
+- PASS when the program's own site shows a NEW future cycle announced (e.g., "2026 deadline was April 2. The 2027 cycle opens in January 2027."). The new cycle effectively replaces the past one — PASS.
+- UNCERTAIN when you can't clearly determine whether a new cycle exists.
+- FAIL when the program's own site explicitly says no future cycle is planned, or the program is discontinued.
 
-🚨 CONSERVATIVE BIAS — DEFAULT TO UNCERTAIN, NOT FAIL:
-A FAIL verdict tells the user to delete their draft application. A false FAIL destroys real work. An UNCERTAIN verdict just asks the user to verify. Therefore:
+If JS says ROLLING:
+- PASS when the program's own site confirms rolling/continuous intake.
+- UNCERTAIN when the site is ambiguous or you can't find it.
+- FAIL when the site shows an actual annual deadline (i.e., the candidate was wrong about rolling).
 
-- When in doubt: UNCERTAIN.
-- When sources conflict: UNCERTAIN.
-- When the program's official site is unclear or wasn't found: UNCERTAIN.
-- When the only evidence of "past deadline" is from a Submittable archive or third-party aggregator: UNCERTAIN.
-- When the candidate provided a future deadline but web search is inconclusive: UNCERTAIN.
-- FAIL requires: (a) explicit current-year evidence from the program's OWN site, AND (b) that evidence clearly states no future cycle exists or the program is discontinued, AND (c) no contradicting evidence anywhere on the program's official site.
+If JS says UNPARSEABLE:
+- PASS when you find a clear future deadline or rolling intake on the program's own site.
+- UNCERTAIN when you can't find the program's site or the site is ambiguous.
+- FAIL when the program's own site shows the program is definitively closed.
 
-Any one of those three conditions missing → UNCERTAIN.
+DEFAULT BIAS: When in doubt, UNCERTAIN. A FAIL verdict tells the user to delete their draft; a false FAIL destroys real work. UNCERTAIN simply asks the user to verify. Require explicit closure/discontinuation language on the official site before FAILing.
 
-🚨 MANDATORY DATE COMPARISON — YOU MUST DO THIS STEP EXPLICITLY:
-Before writing the availabilityGate verdict, perform this three-step calculation in your reasoning:
+Evidence should quote the exact phrase from the program's site that supports your verdict, with the source URL. For the concern field, state any ambiguity plainly.
 
-STEP 1: Identify the deadline date you found. Parse it into: MONTH, DAY, YEAR.
-STEP 2: State today's date explicitly: Today is ${verifyTodayReadable} (${verifyTodayISO}). Parse today into: MONTH, DAY, YEAR.
-STEP 3: Compare year first, then month, then day. The deadline is in the FUTURE (has not passed) if:
-  (year of deadline) > (year of today), OR
-  (year of deadline) == (year of today) AND (month of deadline) > (month of today), OR
-  (year of deadline) == (year of today) AND (month of deadline) == (month of today) AND (day of deadline) >= (day of today)
-
-Only if ALL three are false has the deadline actually passed.
-
-WORKED EXAMPLE: Today is April 22, 2026. Deadline is May 12, 2026.
-- Year equal. Month: 5 > 4. Deadline is in the FUTURE. PASS.
-
-COUNTER-EXAMPLE: Today is April 22, 2026. Deadline is April 2, 2026.
-- Year equal. Month equal. Day: 2 < 22. Deadline HAS PASSED by date comparison.
-- BUT: even a passed deadline does NOT automatically mean FAIL. You still must apply the CONSERVATIVE BIAS rules above — check the program's own site, confirm no future cycle is announced, check for contradicting evidence. A passed deadline with an announced next cycle = PASS (next cycle is future). A passed deadline where you can't find the program's official site = UNCERTAIN. A passed deadline with CONFIRMED no-future-cycle on the program's own page = FAIL.
-
-The date comparison is NECESSARY for a FAIL-by-past-deadline verdict (deadline must actually be past) but NOT SUFFICIENT (must also meet all three conservative-bias conditions).
-
-🚨 TRAINING-DATA BIAS WARNING:
-Your training data likely predates ${verifyTodayReadable}. Any "most recent cycle" you remember from training is STALE. Annual programs keep running annually. A program that ran in 2025 almost certainly has a 2026 cycle now. Absence of 2026 info in your training memory is NOT evidence the program has closed — it's evidence your training is stale.
-
-If you find only 2025-cycle information via web search and cannot find 2026-cycle information on the program's OWN site, the verdict is UNCERTAIN, not FAIL. Train yourself to search for "[program name] 2026 deadline" or "[program name] current application 2026."
-
-This gate covers THREE distinct ways an opportunity can be unavailable:
-
-(a) **Past deadline with no future cycle announced** — meets ALL of the conservative criteria above. Requires authoritative-source confirmation.
-
-(b) **Discontinued** — the program has explicitly ended. Requires EXPLICIT current-year language on the program's OWN site like "no longer offered," "discontinued," "we are no longer offering this fellowship."
-
-(c) **On hold / paused** — explicit current-year language on the program's OWN site like "currently on hiatus," "paused pending funding."
-
-Verdicts:
-- PASS: Authoritative source confirms a specific FUTURE deadline (verified via MANDATORY DATE COMPARISON) OR explicit rolling-intake language on the program's own site.
-- FAIL: All three conservative criteria met (authoritative source + clear no-future-cycle + no contradicting evidence). Rare.
-- UNCERTAIN: Any ambiguity, any non-authoritative-source-only evidence, any contradiction between sources, any missing official-site check. Default.
-
-The candidate claimed the deadline is "${candidateDeadline}". If that date is TODAY OR LATER (verified via MANDATORY DATE COMPARISON), that is evidence pointing to the current cycle. Your job is to verify via the program's own official site, not to disprove via Submittable archives.
+When FAILing, ALWAYS populate the \`failureType\` field with one of: "discontinued" (program has ended), "on-hold" (paused pending funding/restructuring), "past-deadline" (most recent cycle ended with no future cycle). If unsure which, use "past-deadline" as the default. This is critical — it's how the system distinguishes "deadline passed" failures (which may be overridden if JS finds a future deadline) from "genuinely closed" failures (which stand).
 
 GATE 5 — SERVICE-STAGE FIT:
 Does the SERVICE this program offers actually help a project at the "${project.stage}" stage? This is NOT about whether the applicant is eligible — that's stage gate. This is about whether the program's OFFERED HELP matches what a project at this stage actually needs.
@@ -1893,10 +1929,69 @@ overallVerdict rules:
       result.availabilityGate = result.deadlineGate;
     }
 
+    // SAFETY CHECK: catch model-vs-JS disagreement on availability.
+    //
+    // If JS knows the deadline is FUTURE (or rolling) but the model returned
+    // FAIL, we need to decide whether to trust the model or flag disagreement.
+    //
+    // Inverted logic (safer): we DEFAULT to trusting JS and overriding the model,
+    // UNLESS the model's failureType field explicitly says "discontinued" or
+    // "on-hold". Those are closure reasons that can coexist with a future-looking
+    // deadline listing. "past-deadline" or null failureType with a future JS
+    // status → override to uncertain.
+    if (result.availabilityGate && result.availabilityGate.verdict === "fail") {
+      const failType = (result.availabilityGate.failureType || "").toLowerCase();
+      const isExplicitClosureFail = failType.includes("discontinued") ||
+        failType.includes("on-hold") || failType.includes("on hold") ||
+        failType.includes("hiatus") || failType.includes("paused") ||
+        failType.includes("permanently");
+
+      if (deadlineStatus.status === "future" && !isExplicitClosureFail) {
+        // Model said FAIL but didn't cite discontinuation. JS says deadline is future.
+        // Almost certainly a model error or source-selection failure. Override to uncertain.
+        const origConcern = result.availabilityGate.concern || "";
+        result.availabilityGate.verdict = "uncertain";
+        result.availabilityGate.concern =
+          "⚠ JS date check: deadline is " + deadlineStatus.daysUntil + " days in the future (" +
+          deadlineStatus.date.toISOString().slice(0, 10) +
+          "). AI returned FAIL without citing discontinuation or hiatus. Auto-downgraded to UNCERTAIN. " +
+          "AI's original reasoning: " + (origConcern || "(none)");
+        result._jsOverride = "future-deadline-non-closure-fail";
+      } else if (deadlineStatus.status === "future" && isExplicitClosureFail) {
+        // Model found genuine closure/discontinuation/hiatus evidence. Trust it.
+        // Annotate for transparency so user knows JS saw a future deadline too.
+        const origConcern = result.availabilityGate.concern || "";
+        result.availabilityGate.concern =
+          "Note: JS detected a future deadline (" + deadlineStatus.date.toISOString().slice(0, 10) + "), " +
+          "but AI cited " + failType + " — FAIL stands on the closure evidence. " +
+          "AI reasoning: " + (origConcern || "(none)");
+      } else if (deadlineStatus.status === "rolling" && !isExplicitClosureFail) {
+        // Candidate claimed rolling, model failed without citing closure. Override.
+        const origConcern = result.availabilityGate.concern || "";
+        result.availabilityGate.verdict = "uncertain";
+        result.availabilityGate.concern =
+          "⚠ Candidate claimed rolling intake. AI returned FAIL without citing discontinuation. " +
+          "Downgraded to UNCERTAIN. AI's reasoning: " + (origConcern || "(none)");
+        result._jsOverride = "rolling-non-closure-fail";
+      }
+    }
+    // Also attach the JS status to the gate for UI display
+    if (result.availabilityGate) {
+      result.availabilityGate._jsStatus = deadlineStatus.status;
+    }
+
     // Ensure overallVerdict is present and valid
     const validVerdicts = ["verified", "fail", "uncertain"];
     if (!validVerdicts.includes(result.overallVerdict)) {
       // Derive from gates if missing (include availabilityGate and serviceFitGate)
+      const gates = [result.stageGate, result.genreGate, result.demographicGate, result.availabilityGate, result.serviceFitGate].filter(g => g && g.verdict);
+      if (gates.some(g => g.verdict === "fail")) result.overallVerdict = "fail";
+      else if (gates.every(g => g.verdict === "pass") && gates.length > 0) result.overallVerdict = "verified";
+      else result.overallVerdict = "uncertain";
+    }
+
+    // Re-derive overallVerdict if availability got downgraded by the safety check
+    if (result._jsOverride) {
       const gates = [result.stageGate, result.genreGate, result.demographicGate, result.availabilityGate, result.serviceFitGate].filter(g => g && g.verdict);
       if (gates.some(g => g.verdict === "fail")) result.overallVerdict = "fail";
       else if (gates.every(g => g.verdict === "pass") && gates.length > 0) result.overallVerdict = "verified";
@@ -4936,6 +5031,16 @@ function DiscView({
                               }}>
                                 {vsym} {g.label.toUpperCase()}: {(gate.verdict || "").toUpperCase()}
                               </p>
+                              {gate._jsStatus && (
+                                <p style={{
+                                  fontFamily: FN.m,
+                                  fontSize: "10px",
+                                  color: C.tm,
+                                  marginBottom: "4px"
+                                }}>
+                                  JS date check: {gate._jsStatus}
+                                </p>
+                              )}
                               {gate.evidence && (
                                 <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5, marginBottom: "4px" }}>
                                   {gate.evidence}
@@ -6211,6 +6316,16 @@ Artistic Statement | 500 words`}</pre>
                       }}>
                         {gsym} {g.label.toUpperCase()}: {(gate.verdict || "").toUpperCase()}
                       </p>
+                      {gate._jsStatus && (
+                        <p style={{
+                          fontFamily: FN.m,
+                          fontSize: "10px",
+                          color: C.tm,
+                          marginBottom: "3px"
+                        }}>
+                          JS date check: {gate._jsStatus}
+                        </p>
+                      )}
                       {gate.evidence && (
                         <p style={{ fontSize: "11px", color: C.tx, lineHeight: 1.5, marginBottom: "3px" }}>
                           {gate.evidence}
@@ -6965,6 +7080,16 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                           }}>
                             {gsym} {g.label.toUpperCase()}: {(gate.verdict || "").toUpperCase()}
                           </p>
+                          {gate._jsStatus && (
+                            <p style={{
+                              fontFamily: FN.m,
+                              fontSize: "10px",
+                              color: C.tm,
+                              marginBottom: "3px"
+                            }}>
+                              JS date check: {gate._jsStatus}
+                            </p>
+                          )}
                           {gate.evidence && (
                             <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5, marginBottom: "3px" }}>
                               {gate.evidence}
