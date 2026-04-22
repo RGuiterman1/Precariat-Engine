@@ -2345,6 +2345,45 @@ Return 0-5 tracks. Quality over quantity. If no sibling tracks fit, return [].`;
     return () => { cancelled = true; };
   };
 
+  // Run audit on a single application. Used for per-app re-auditing from
+  // the detail view, so users don't have to re-audit the whole list when
+  // they only care about one item they've manually verified.
+  // Returns a Promise that resolves with { verification } or { error }.
+  const runAuditSingle = async (appId) => {
+    const allApps = appsRef.current;
+    const allProjects = projectsRef.current;
+    const app = allApps.find(a => a.id === appId);
+    if (!app) {
+      return { error: "application not found" };
+    }
+    const project = allProjects.find(p => p.title === app.projTitle);
+    if (!project) {
+      return { error: "project not found — can't verify" };
+    }
+    const candidate = {
+      name: app.oppName,
+      organization: app.oppOrg,
+      type: app.oppType,
+      url: app.oppUrl,
+      deadline: app.oppDeadline,
+      description: (app.content && app.content.requirements && app.content.requirements.summary) || ""
+    };
+    try {
+      const verification = await verifyOpportunityFit(candidate, project);
+      // Persist the result onto the app immediately
+      const current = appsRef.current;
+      const updated = current.map(a =>
+        a.id === appId
+          ? { ...a, auditResult: verification, auditedAt: new Date().toISOString(), auditFlagDismissed: false }
+          : a
+      );
+      sApps(updated);
+      return { verification };
+    } catch (err) {
+      return { error: err.message || "verification failed" };
+    }
+  };
+
   // Background: Generate an application
   // manualFields (optional): array of { fieldName, wordLimit } if user pre-specified the field list
   const runGenerate = async (oppIdx, projectIdx, manualFields) => {
@@ -3393,6 +3432,7 @@ Respond ONLY with JSON (no markdown):
             dismissJob={dismissJob}
             runRefreshApp={runRefreshApp}
             runAuditDrafts={runAuditDrafts}
+            runAuditSingle={runAuditSingle}
             findSiblingTracks={findSiblingTracks}
             fieldLibrary={fieldLibrary}
             getFieldsFromLibrary={getFieldsFromLibrary}
@@ -5652,7 +5692,7 @@ function DeadView({ deadlines, opps, save, go }) {
    APPLICATIONS
    ═══════════════════════════════════════════════════ */
 
-function AppsView({ profile, projects, opps, apps, save, saveOpps, pay, jobs, runGenerate, dismissJob, runRefreshApp, runAuditDrafts, findSiblingTracks, fieldLibrary, getFieldsFromLibrary, saveFieldsToLibrary, deleteFieldLibraryEntry, updateFieldLibraryNotes }) {
+function AppsView({ profile, projects, opps, apps, save, saveOpps, pay, jobs, runGenerate, dismissJob, runRefreshApp, runAuditDrafts, runAuditSingle, findSiblingTracks, fieldLibrary, getFieldsFromLibrary, saveFieldsToLibrary, deleteFieldLibraryEntry, updateFieldLibraryNotes }) {
   const [selO, setSelO] = useState(null);
   const [selP, setSelP] = useState(0);
   const [view, setView] = useState(null);
@@ -5665,6 +5705,7 @@ function AppsView({ profile, projects, opps, apps, save, saveOpps, pay, jobs, ru
   const [outcomeMdl, setOutcomeMdl] = useState(null);
   const [outcomeForm, setOutcomeForm] = useState({ outcome: "", notes: "", postMortem: "" });
   const [humanizingKey, setHumanizingKey] = useState(null);
+  const [auditingAppId, setAuditingAppId] = useState(null);
   const [listFilter, setListFilter] = useState("all");
   // Manual field override — for when user has the actual form field list in hand.
   // manualText holds the pending/current field list as textarea-format string.
@@ -7338,6 +7379,29 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                   disabled={isRefreshing(app.id)}
                 >
                   ✎ Edit structure & regenerate
+                </Btn>
+                <Btn
+                  variant="secondary"
+                  small
+                  onClick={async () => {
+                    if (auditingAppId) return; // already running
+                    setAuditingAppId(app.id);
+                    try {
+                      const result = await runAuditSingle(app.id);
+                      if (result && result.error) {
+                        alert("Audit failed: " + result.error);
+                      }
+                    } catch (e) {
+                      alert("Audit error: " + (e.message || "unknown"));
+                    } finally {
+                      setAuditingAppId(null);
+                    }
+                  }}
+                  disabled={auditingAppId === app.id || isRefreshing(app.id)}
+                >
+                  {auditingAppId === app.id
+                    ? "🔍 Auditing..."
+                    : (app.auditResult ? "🔍 Re-audit opportunity" : "🔍 Audit opportunity")}
                 </Btn>
               </div>
             </div>
