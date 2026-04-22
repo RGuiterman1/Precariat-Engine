@@ -1238,7 +1238,11 @@ Be brutally specific to THIS project and THIS team only. No generic advice. Rese
     }
 
     const prof = profileRef.current;
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const todayReadable = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
     const prompt = `You are an expert film industry researcher. Search for REAL, currently open or upcoming ${tf} for this project. Your job is to find opportunities where this SPECIFIC team's credentials give the highest probability of success.
+
+📅 TODAY'S DATE: ${todayReadable} (${todayISO})
 
 COMPANY: ${prof.companyName} | ${prof.bio} | ${prof.location}
 PROJECT: "${p.title}"
@@ -1255,20 +1259,35 @@ This project is currently in "${p.stage}" stage. ${stageRule}
 
 Before returning ANY opportunity, verify it explicitly accepts projects in "${p.stage}" stage. If an opportunity requires a different stage, EXCLUDE IT. It is better to return fewer results than to include mismatched opportunities.
 
+🗓 DEADLINE REQUIREMENT (NON-NEGOTIABLE):
+Today is ${todayReadable}. Only return opportunities whose deadline is TODAY OR LATER. If the deadline has already passed, EXCLUDE THE OPPORTUNITY entirely — do not return it even if it would normally be a strong match. If an opportunity is cyclical (annual, biannual) and this year's deadline has passed, either find the NEXT cycle's deadline or exclude it if the next cycle isn't yet announced. For opportunities with rolling deadlines or continuous intake, include them with deadline: "rolling" or "ongoing".
+
+🎭 MULTI-TRACK FESTIVALS & ORGANIZATIONS (CRITICAL):
+Many festivals and institutes run MULTIPLE distinct competitions, labs, or grants under a single umbrella, each with its own eligibility. Do not collapse them into one opportunity. Examples:
+- Austin Film Festival runs: Screenplay Competition (screenplays), Second Rounders (screenplays), Valhalla Entertainment Award (completed films), Fiction Podcast Competition (audio), etc.
+- Sundance Institute runs: Screenwriters Lab (scripts), Directors Lab, Documentary Film Program, Episodic Lab, Producers Lab, Native Lab
+- Film Independent runs: the Festival (completed films), Screenwriters Lab, Documentary Lab, Project Involve, Fiscal Sponsorship
+- SFFILM runs: Festival (completed films), Rainin Grants (development/production screenplays)
+- Tribeca runs: Tribeca Festival + Tribeca Film Institute grants
+- Berlin IFF runs: Main competition + Berlinale Talents + World Cinema Fund + Berlinale Co-Production Market
+
+For each opportunity you return, identify the SPECIFIC TRACK/PROGRAM — not the umbrella organization. Name it like "Austin Film Festival — Screenplay Competition" or "Sundance Institute — Screenwriters Lab." If a festival has multiple tracks that could fit this project's stage, include the best-fitting one. If a different track at the same festival would fit BETTER than the one you surfaced, include THAT one instead.
+
 NOTE: A second verification pass will rigorously check each candidate's eligibility against this project's stage, genre/format, and demographic/thematic requirements. Your job is to cast a reasonably broad but relevant net. Include candidates where you are reasonably confident about stage fit; the verification pass will confirm or reject.
 
 Respond ONLY with a JSON array. Each object must have:
-- "name", "organization"
+- "name" (the specific track/program, not just the umbrella — e.g. "Screenplay Competition" not just "Austin Film Festival")
+- "organization" (the umbrella, e.g. "Austin Film Festival")
 - "type" ("Grant"|"Festival"|"Lab"|"Fellowship"|"Residency")
-- "deadline" (specific date like "June 15, 2026" when available)
+- "deadline" (specific date in "Month Day, Year" format when available, or "rolling" / "ongoing" for continuous intake — must be today or later)
 - "amount", "submissionFee", "url"
-- "description" (2-3 sentences)
+- "description" (2-3 sentences describing THIS SPECIFIC TRACK, not the umbrella organization)
 - "matchReason" (why this fits THIS specific project — reference the analysis AND team credentials if relevant)
 - "teamAdvantage" (optional — if a specific team member's credentials give this project an edge for this opportunity, explain how. E.g., "Erika Hampson's Oscar win makes this project eligible for AMPAS Gold programs" — leave empty if team credentials don't specifically apply)
 - "matchStrength" ("strong"|"moderate"|"speculative")
 - "eligibility" (other key requirements beyond stage)
 
-Find 12-18 real opportunities. The verification pass will filter, so err slightly on the side of inclusion when you're reasonably confident. Prioritize opportunities where team credentials give maximum leverage.`;
+Find 12-18 real opportunities with CURRENT, FUTURE deadlines. The verification pass will filter, so err slightly on the side of inclusion when you're reasonably confident. Prioritize opportunities where team credentials give maximum leverage.`;
 
     try {
       const txt = await askClaude(prompt, true);
@@ -1285,8 +1304,28 @@ Find 12-18 real opportunities. The verification pass will filter, so err slightl
           return !submittedSet.has(key);
         });
 
+        // Filter out candidates whose deadline has already passed.
+        // Handles common formats: "June 15, 2026", "2026-06-15", "rolling", "ongoing".
+        // When parsing fails, we keep the opp (uncertain — let verification handle it).
+        const nowMs = Date.now();
+        const startOfTodayMs = new Date(new Date().toISOString().slice(0, 10)).getTime();
+        const isDeadlineValid = (deadlineStr) => {
+          if (!deadlineStr) return true; // no deadline → keep
+          const s = String(deadlineStr).toLowerCase().trim();
+          if (!s || s === "rolling" || s === "ongoing" || s === "continuous" || s.includes("rolling") || s.includes("tbd") || s.includes("unknown")) return true;
+          const parsed = new Date(deadlineStr);
+          if (isNaN(parsed.getTime())) return true; // unparseable → keep
+          return parsed.getTime() >= startOfTodayMs;
+        };
+        const freshCandidates = dedupedCandidates.filter(o => {
+          if (isDeadlineValid(o.deadline)) return true;
+          console.log("Discovery: dropped past-deadline opp:", o.name, "(deadline:", o.deadline, ")");
+          return false;
+        });
+        const droppedPastDeadline = dedupedCandidates.length - freshCandidates.length;
+
         // Update job label so user sees we're now verifying
-        updateJob(jobId, { label: "Verifying " + dedupedCandidates.length + " candidates..." });
+        updateJob(jobId, { label: "Verifying " + freshCandidates.length + " candidates..." + (droppedPastDeadline > 0 ? " (" + droppedPastDeadline + " past-deadline dropped)" : "") });
 
         // Helper: check if this search run is still the active one. If a newer
         // search has started, its jobId replaced ours, so we should stop writing.
@@ -1299,12 +1338,12 @@ Find 12-18 real opportunities. The verification pass will filter, so err slightl
 
         // Show preliminary results so the user knows something's happening
         if (await isStillActive()) {
-          setSearchResults(dedupedCandidates.map(c => ({ ...c, verification: { overallVerdict: "pending" } })));
+          setSearchResults(freshCandidates.map(c => ({ ...c, verification: { overallVerdict: "pending" } })));
         }
 
         // PASS 2 — Verify each candidate in parallel
         const verifiedResults = await Promise.all(
-          dedupedCandidates.map(async (candidate) => {
+          freshCandidates.map(async (candidate) => {
             try {
               const verification = await verifyOpportunityFit(candidate, p);
               return { ...candidate, verification };
@@ -1473,6 +1512,75 @@ overallVerdict rules:
 
     result.verifiedAt = new Date().toISOString();
     return result;
+  };
+
+  // SIBLING TRACK FINDER — When a verification fails because of stage mismatch
+  // (e.g., "Valhalla Award requires completed films" but project is a screenplay),
+  // many festivals/institutes offer OTHER tracks at the same org that would fit.
+  // This finds those sibling tracks via a focused web search.
+  const findSiblingTracks = async (failedOppName, failedOppOrg, project) => {
+    const todayReadable = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    const prompt = `You are helping a filmmaker find the RIGHT track at an organization where they picked the wrong one.
+
+═══════════════════════════════════════════
+CONTEXT
+═══════════════════════════════════════════
+The filmmaker attempted to apply to "${failedOppName}" at "${failedOppOrg}" for their project, but that specific track turned out to be ineligible (usually a stage mismatch — e.g., the track requires a completed film but their project is a screenplay, or vice versa).
+
+Many festivals and institutes run MULTIPLE tracks/programs/competitions under one umbrella, each with its own eligibility. Your job: find the OTHER tracks at "${failedOppOrg}" (and ONLY that organization — not other festivals) that WOULD accept this filmmaker's project.
+
+═══════════════════════════════════════════
+PROJECT
+═══════════════════════════════════════════
+Title: ${project.title}
+Stage: ${project.stage}
+Format: ${project.format}
+Genre: ${project.genre || "unspecified"}
+Logline: ${project.logline || "?"}
+Themes: ${project.themes || "?"}
+
+📅 TODAY'S DATE: ${todayReadable}
+
+═══════════════════════════════════════════
+YOUR TASK
+═══════════════════════════════════════════
+1. Use web search to find ALL the competitions, labs, grants, or programs that "${failedOppOrg}" runs.
+2. For each one, determine whether it accepts projects at "${project.stage}" stage in "${project.format}" format.
+3. Return ONLY the tracks at "${failedOppOrg}" that would accept this specific project. Do NOT include tracks from other organizations.
+4. Exclude the original failed track ("${failedOppName}").
+5. Only include tracks with deadlines TODAY OR LATER. Exclude any past-deadline tracks.
+6. If "${failedOppOrg}" has NO other tracks that fit, return an empty array — do NOT invent tracks.
+
+═══════════════════════════════════════════
+OUTPUT FORMAT
+═══════════════════════════════════════════
+Respond ONLY with a JSON array (no markdown):
+[
+  {
+    "name": "Specific track name (e.g. 'Screenplay Competition', not just 'Austin Film Festival')",
+    "organization": "${failedOppOrg}",
+    "type": "Grant" | "Festival" | "Lab" | "Fellowship" | "Residency",
+    "deadline": "Month Day, Year" or "rolling",
+    "amount": "prize/funding amount if known",
+    "submissionFee": "$XX" or "Free",
+    "url": "direct URL to this track's page, not the umbrella homepage",
+    "description": "2-3 sentences about this SPECIFIC track",
+    "whyThisFits": "1-2 sentences explaining why this track fits ${project.title} (stage, format, genre alignment)",
+    "matchStrength": "strong" | "moderate"
+  }
+]
+
+Return 0-5 tracks. Quality over quantity. If no sibling tracks fit, return [].`;
+
+    try {
+      const response = await askClaude(prompt, true);
+      const result = extractJSON(response);
+      if (!Array.isArray(result)) return [];
+      return result;
+    } catch (err) {
+      console.error("findSiblingTracks error:", err);
+      return [];
+    }
   };
 
   // AUDIT — Verify eligibility of all draft/approved applications against their projects.
@@ -2568,12 +2676,14 @@ Respond ONLY with JSON (no markdown):
             opps={opps}
             apps={apps}
             save={sApps}
+            saveOpps={sOpps}
             pay={pay}
             jobs={jobs}
             runGenerate={runGenerate}
             dismissJob={dismissJob}
             runRefreshApp={runRefreshApp}
             runAuditDrafts={runAuditDrafts}
+            findSiblingTracks={findSiblingTracks}
             fieldLibrary={fieldLibrary}
             getFieldsFromLibrary={getFieldsFromLibrary}
             saveFieldsToLibrary={saveFieldsToLibrary}
@@ -4641,7 +4751,7 @@ function DeadView({ deadlines, opps, save, go }) {
    APPLICATIONS
    ═══════════════════════════════════════════════════ */
 
-function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate, dismissJob, runRefreshApp, runAuditDrafts, fieldLibrary, getFieldsFromLibrary, saveFieldsToLibrary, deleteFieldLibraryEntry, updateFieldLibraryNotes }) {
+function AppsView({ profile, projects, opps, apps, save, saveOpps, pay, jobs, runGenerate, dismissJob, runRefreshApp, runAuditDrafts, findSiblingTracks, fieldLibrary, getFieldsFromLibrary, saveFieldsToLibrary, deleteFieldLibraryEntry, updateFieldLibraryNotes }) {
   const [selO, setSelO] = useState(null);
   const [selP, setSelP] = useState(0);
   const [view, setView] = useState(null);
@@ -4676,6 +4786,11 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
   const [auditProgress, setAuditProgress] = useState({ done: 0, total: 0 });
   const [auditResults, setAuditResults] = useState([]);
   const [auditCancelFn, setAuditCancelFn] = useState(null);
+
+  // Sibling tracks modal — shown when user clicks "Find right track" on a failed audit result.
+  // Contains the loading state, results, and lets user save sibling tracks directly to opps.
+  // Structure: { appId, oppName, oppOrg, projTitle, loading: bool, tracks: [...], error: string|null }
+  const [siblingMdl, setSiblingMdl] = useState(null);
 
   // Parse manual field text into array of { fieldName, wordLimit }
   // Format: one field per line, "Field Name | word limit" (pipe-separated)
@@ -5335,6 +5450,52 @@ Artistic Statement | 500 words`}</pre>
               <Btn variant="ghost" small onClick={() => openAppDetail(r.appId)}>
                 View app
               </Btn>
+              {v?.overallVerdict === "fail" && v?.stageGate?.verdict === "fail" && (
+                <Btn
+                  variant="teal"
+                  small
+                  onClick={() => {
+                    // Find the project this app is attached to
+                    const app = apps.find(a => a.id === r.appId);
+                    const project = app ? projects.find(p => p.title === app.projTitle) : null;
+                    if (!project) {
+                      alert("Couldn't find the project for this application.");
+                      return;
+                    }
+                    // Open modal in loading state
+                    setSiblingMdl({
+                      appId: r.appId,
+                      oppName: r.oppName,
+                      oppOrg: r.oppOrg,
+                      projTitle: r.projTitle,
+                      project: project,
+                      loading: true,
+                      tracks: [],
+                      error: null
+                    });
+                    // Kick off the sibling search
+                    findSiblingTracks(r.oppName, r.oppOrg, project)
+                      .then(tracks => {
+                        setSiblingMdl(prev => prev && prev.appId === r.appId ? {
+                          ...prev,
+                          loading: false,
+                          tracks: Array.isArray(tracks) ? tracks : [],
+                          error: null
+                        } : prev);
+                      })
+                      .catch(err => {
+                        setSiblingMdl(prev => prev && prev.appId === r.appId ? {
+                          ...prev,
+                          loading: false,
+                          tracks: [],
+                          error: err.message || "Failed to find sibling tracks"
+                        } : prev);
+                      });
+                  }}
+                >
+                  🔎 Find right track
+                </Btn>
+              )}
               {v?.overallVerdict === "fail" && (
                 <Btn variant="danger" small onClick={() => deleteApp(r.appId)}>
                   Delete draft
@@ -5598,6 +5759,180 @@ Artistic Statement | 500 words`}</pre>
             </div>
           </div>
         )}
+      </Mdl>
+    );
+  })();
+
+  // SIBLING TRACKS MODAL — shown when user clicks "Find right track" on a failed audit result.
+  // Displays alternate tracks at the same org and lets user save any to the opps list.
+  const siblingMdlJsx = (() => {
+    if (!siblingMdl) return null;
+
+    const closeSiblings = () => setSiblingMdl(null);
+
+    // Is this track already in the opps list?
+    const isOppSaved = (track) =>
+      opps.some(o =>
+        (o.name || "").toLowerCase().trim() === (track.name || "").toLowerCase().trim() &&
+        (o.organization || "").toLowerCase().trim() === (track.organization || "").toLowerCase().trim()
+      );
+
+    const saveTrack = (track) => {
+      if (isOppSaved(track)) return;
+      saveOpps([...opps, {
+        ...track,
+        savedAt: new Date().toISOString(),
+        // We didn't run Pass 2 verification on sibling tracks individually here —
+        // the sibling search already filtered to project-compatible tracks,
+        // but we don't have per-gate evidence. Mark as needing verification
+        // so the audit system will still check on next audit run.
+        verification: undefined
+      }]);
+    };
+
+    return (
+      <Mdl
+        open={siblingMdl !== null}
+        onClose={closeSiblings}
+        title={"Alternate Tracks at " + (siblingMdl.oppOrg || "this organization")}
+        width="680px"
+      >
+        <div>
+          <p style={{ fontSize: "13px", color: C.tm, lineHeight: 1.6, marginBottom: "16px" }}>
+            <strong style={{ color: C.tx }}>"{siblingMdl.oppName}"</strong> didn't fit <strong style={{ color: C.tx }}>"{siblingMdl.projTitle}"</strong> because of stage mismatch. Many festivals and institutes run multiple tracks — here's what else {siblingMdl.oppOrg} offers that might fit.
+          </p>
+
+          {siblingMdl.loading && (
+            <div style={{
+              padding: "24px",
+              textAlign: "center",
+              color: C.tm,
+              fontSize: "13px",
+              fontFamily: FN.m
+            }}>
+              ⏳ Searching {siblingMdl.oppOrg} for alternate tracks...
+              <p style={{ fontSize: "11px", color: C.td, marginTop: "8px" }}>
+                (30-60 seconds — the engine is reading their programs page)
+              </p>
+            </div>
+          )}
+
+          {!siblingMdl.loading && siblingMdl.error && (
+            <div style={{
+              padding: "12px 14px",
+              background: C.dn + "10",
+              border: "1px solid " + C.dn + "40",
+              borderRadius: "6px",
+              fontSize: "12px",
+              color: C.tx,
+              marginBottom: "16px"
+            }}>
+              ⚠ {siblingMdl.error}
+            </div>
+          )}
+
+          {!siblingMdl.loading && !siblingMdl.error && siblingMdl.tracks.length === 0 && (
+            <div style={{
+              padding: "16px",
+              background: C.bg,
+              border: "1px solid " + C.bd,
+              borderRadius: "6px",
+              fontSize: "13px",
+              color: C.tm,
+              lineHeight: 1.5,
+              marginBottom: "16px"
+            }}>
+              No other tracks at {siblingMdl.oppOrg} appear to fit this project's stage and format right now. You may need to look elsewhere for similar programs, or wait for the next cycle.
+            </div>
+          )}
+
+          {!siblingMdl.loading && siblingMdl.tracks.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "16px" }}>
+              {siblingMdl.tracks.map((track, i) => {
+                const saved = isOppSaved(track);
+                const strengthColor = track.matchStrength === "strong" ? C.ok : C.wn;
+                return (
+                  <div key={i} style={{
+                    padding: "12px 14px",
+                    background: C.bg,
+                    border: "1px solid " + C.bd,
+                    borderLeft: "3px solid " + strengthColor,
+                    borderRadius: "6px"
+                  }}>
+                    <div style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      gap: "10px",
+                      flexWrap: "wrap",
+                      marginBottom: "6px"
+                    }}>
+                      <div style={{ flex: 1, minWidth: "200px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "4px" }}>
+                          <p style={{ fontSize: "14px", fontWeight: 600, color: C.tx }}>
+                            {track.name}
+                          </p>
+                          <Bdg color={strengthColor}>
+                            {track.matchStrength || "moderate"}
+                          </Bdg>
+                          {track.type && (
+                            <Bdg color={C.tl}>{track.type}</Bdg>
+                          )}
+                        </div>
+                        <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m }}>
+                          {track.organization}
+                          {track.deadline && " · 📅 " + track.deadline}
+                          {track.submissionFee && " · 💰 " + track.submissionFee}
+                          {track.amount && " · 🏆 " + track.amount}
+                        </p>
+                      </div>
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        {track.url && (
+                          <Btn variant="ghost" small onClick={() => window.open(track.url, "_blank")}>↗</Btn>
+                        )}
+                        <Btn
+                          variant={saved ? "ghost" : "primary"}
+                          small
+                          onClick={() => saveTrack(track)}
+                          disabled={saved}
+                        >
+                          {saved ? "✓ Saved" : "Save to opps"}
+                        </Btn>
+                      </div>
+                    </div>
+                    {track.description && (
+                      <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5, marginBottom: "6px" }}>
+                        {track.description}
+                      </p>
+                    )}
+                    {track.whyThisFits && (
+                      <div style={{
+                        fontSize: "12px",
+                        color: C.ac,
+                        lineHeight: 1.5,
+                        padding: "6px 8px",
+                        background: C.ac + "08",
+                        borderRadius: "3px",
+                        fontFamily: FN.m
+                      }}>
+                        ✓ {track.whyThisFits}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            paddingTop: "12px",
+            borderTop: "1px solid " + C.bd
+          }}>
+            <Btn variant="secondary" onClick={closeSiblings}>Close</Btn>
+          </div>
+        </div>
       </Mdl>
     );
   })();
@@ -7289,6 +7624,7 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
         {/* Shared Edit Structure modal — rendered here so it works from detail view too */}
         {structureMdlJsx}
         {auditMdlJsx}
+        {siblingMdlJsx}
       </>
     );
   }
@@ -7747,6 +8083,7 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
 
       {structureMdlJsx}
       {auditMdlJsx}
+      {siblingMdlJsx}
     </div>
   );
 }
