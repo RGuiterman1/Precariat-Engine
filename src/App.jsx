@@ -56,6 +56,27 @@ const FILE_CATEGORIES = [
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB per file
 
+// Eligibility attributes for discovery verification. Each attribute is a stable
+// key; the label is shown in the project edit form. "team" attributes describe
+// the filmmakers; "themes" attributes describe the project's subject matter.
+// Both are used to filter opportunities that have demographic/thematic gates.
+const ELIGIBILITY_ATTRIBUTES = [
+  { key: "bipoc-team",      label: "BIPOC filmmaker(s)",         group: "team"   },
+  { key: "lgbtq-team",      label: "LGBTQ+ filmmaker(s)",        group: "team"   },
+  { key: "women-led",       label: "Women-led",                  group: "team"   },
+  { key: "jewish-team",     label: "Jewish filmmaker(s)",        group: "team"   },
+  { key: "disabled-team",   label: "Disabled filmmaker(s)",      group: "team"   },
+  { key: "veteran-team",    label: "Veteran(s) on team",         group: "team"   },
+  { key: "immigrant-team",  label: "Immigrant / first-gen team", group: "team"   },
+  { key: "bipoc-themes",    label: "BIPOC stories / subjects",   group: "themes" },
+  { key: "lgbtq-themes",    label: "LGBTQ+ stories / subjects",  group: "themes" },
+  { key: "women-themes",    label: "Women-centered stories",     group: "themes" },
+  { key: "jewish-themes",   label: "Jewish themes / subjects",   group: "themes" },
+  { key: "disability-themes", label: "Disability themes",        group: "themes" },
+  { key: "veteran-themes",  label: "Military / veteran themes",  group: "themes" },
+  { key: "immigrant-themes", label: "Immigration themes",        group: "themes" }
+];
+
 const C = {
   bg: "#0a0a0c", sf: "#131318", bd: "#222230", bl: "#2a2a3a",
   tx: "#e8e8f0", tm: "#8888a0", td: "#555568",
@@ -1234,39 +1255,95 @@ This project is currently in "${p.stage}" stage. ${stageRule}
 
 Before returning ANY opportunity, verify it explicitly accepts projects in "${p.stage}" stage. If an opportunity requires a different stage, EXCLUDE IT. It is better to return fewer results than to include mismatched opportunities.
 
+NOTE: A second verification pass will rigorously check each candidate's eligibility against this project's stage, genre/format, and demographic/thematic requirements. Your job is to cast a reasonably broad but relevant net. Include candidates where you are reasonably confident about stage fit; the verification pass will confirm or reject.
+
 Respond ONLY with a JSON array. Each object must have:
 - "name", "organization"
 - "type" ("Grant"|"Festival"|"Lab"|"Fellowship"|"Residency")
 - "deadline" (specific date like "June 15, 2026" when available)
 - "amount", "submissionFee", "url"
 - "description" (2-3 sentences)
-- "stageEligibility" (explicit quote or paraphrase from the opportunity confirming it accepts ${p.stage}-stage projects)
 - "matchReason" (why this fits THIS specific project — reference the analysis AND team credentials if relevant)
 - "teamAdvantage" (optional — if a specific team member's credentials give this project an edge for this opportunity, explain how. E.g., "Erika Hampson's Oscar win makes this project eligible for AMPAS Gold programs" — leave empty if team credentials don't specifically apply)
 - "matchStrength" ("strong"|"moderate"|"speculative")
 - "eligibility" (other key requirements beyond stage)
 
-Find 6-12 real opportunities that STRICTLY match the project's current stage. Quality over quantity. Prioritize opportunities where team credentials give maximum leverage.`;
+Find 12-18 real opportunities. The verification pass will filter, so err slightly on the side of inclusion when you're reasonably confident. Prioritize opportunities where team credentials give maximum leverage.`;
 
     try {
       const txt = await askClaude(prompt, true);
       const parsed = extractJSON(txt);
       if (parsed && Array.isArray(parsed)) {
         // Hard client-side filter: drop any that already exist as submitted apps FOR THIS PROJECT
-        // (belt-and-suspenders safety in case the AI ignored the exclusion list)
         const submittedSet = new Set(
           projectApps
             .filter(ap => ap.status === "submitted")
             .map(ap => (ap.oppName || "").toLowerCase().trim() + "|" + (ap.oppOrg || "").toLowerCase().trim())
         );
-        const filtered = parsed.filter(o => {
+        const dedupedCandidates = parsed.filter(o => {
           const key = (o.name || "").toLowerCase().trim() + "|" + (o.organization || "").toLowerCase().trim();
           return !submittedSet.has(key);
         });
-        const order = { strong: 0, moderate: 1, speculative: 2 };
-        const sorted = [...filtered].sort(
-          (a, b) => (order[a.matchStrength] || 2) - (order[b.matchStrength] || 2)
+
+        // Update job label so user sees we're now verifying
+        updateJob(jobId, { label: "Verifying " + dedupedCandidates.length + " candidates..." });
+
+        // Helper: check if this search run is still the active one. If a newer
+        // search has started, its jobId replaced ours, so we should stop writing.
+        const isStillActive = () => new Promise(resolve => {
+          setJobs(current => {
+            resolve(current.some(j => j.id === jobId));
+            return current;
+          });
+        });
+
+        // Show preliminary results so the user knows something's happening
+        if (await isStillActive()) {
+          setSearchResults(dedupedCandidates.map(c => ({ ...c, verification: { overallVerdict: "pending" } })));
+        }
+
+        // PASS 2 — Verify each candidate in parallel
+        const verifiedResults = await Promise.all(
+          dedupedCandidates.map(async (candidate) => {
+            try {
+              const verification = await verifyOpportunityFit(candidate, p);
+              return { ...candidate, verification };
+            } catch (err) {
+              console.error("Verification error for " + candidate.name + ":", err);
+              return {
+                ...candidate,
+                verification: {
+                  overallVerdict: "uncertain",
+                  error: err.message || "verification failed",
+                  stageGate: null,
+                  genreGate: null,
+                  demographicGate: null
+                }
+              };
+            }
+          })
         );
+
+        // If a newer search ran while we were verifying, abandon these results
+        if (!(await isStillActive())) {
+          return;
+        }
+
+        // Filter: drop "fail" entirely, keep "verified" and "uncertain"
+        const surviving = verifiedResults.filter(r =>
+          r.verification && r.verification.overallVerdict !== "fail"
+        );
+
+        // Sort: verified first (by matchStrength), then uncertain (by matchStrength)
+        const strengthOrder = { strong: 0, moderate: 1, speculative: 2 };
+        const verdictOrder = { verified: 0, uncertain: 1, pending: 2 };
+        const sorted = [...surviving].sort((a, b) => {
+          const av = verdictOrder[a.verification.overallVerdict] ?? 3;
+          const bv = verdictOrder[b.verification.overallVerdict] ?? 3;
+          if (av !== bv) return av - bv;
+          return (strengthOrder[a.matchStrength] || 2) - (strengthOrder[b.matchStrength] || 2);
+        });
+
         setSearchResults(sorted);
         removeJob(jobId);
       } else {
@@ -1278,6 +1355,225 @@ Find 6-12 real opportunities that STRICTLY match the project's current stage. Qu
       setSearchError(e.message || "Search failed");
       updateJob(jobId, { status: "error", error: e.message || "Search failed" });
     }
+  };
+
+  // PASS 2 — Eligibility verification. For each candidate from Pass 1 discovery,
+  // run a focused web search to check the opportunity's guidelines against the
+  // project's stage, genre/format, and demographic/thematic eligibility attributes.
+  // Returns structured verification with per-gate evidence and source URLs.
+  const verifyOpportunityFit = async (candidate, project) => {
+    const attrs = project.eligibilityAttributes || [];
+    const attrLabels = attrs
+      .map(k => ELIGIBILITY_ATTRIBUTES.find(a => a.key === k))
+      .filter(Boolean)
+      .map(a => a.label);
+    const attrSection = attrLabels.length > 0
+      ? "PROJECT'S ELIGIBILITY ATTRIBUTES:\n" + attrLabels.map(l => "- " + l).join("\n")
+      : "PROJECT'S ELIGIBILITY ATTRIBUTES: (none declared by user)";
+
+    const prompt = `You are verifying whether a specific film opportunity is a genuine fit for a specific project. You will evaluate three gates and return structured JSON with evidence.
+
+═══════════════════════════════════════════
+OPPORTUNITY
+═══════════════════════════════════════════
+Name: ${candidate.name}
+Organization: ${candidate.organization}
+Type: ${candidate.type}
+URL: ${candidate.url || "(none provided)"}
+Description: ${candidate.description || ""}
+
+═══════════════════════════════════════════
+PROJECT
+═══════════════════════════════════════════
+Title: ${project.title}
+Stage: ${project.stage}
+Format: ${project.format}
+Genre: ${project.genre || "unspecified"}
+Logline: ${project.logline || "?"}
+Themes: ${project.themes || "?"}
+${attrSection}
+
+═══════════════════════════════════════════
+YOUR TASK
+═══════════════════════════════════════════
+Use web search to find the opportunity's official eligibility / submission guidelines page. Read it carefully. Then evaluate THREE gates:
+
+GATE 1 — STAGE:
+Does this opportunity explicitly accept projects at the "${project.stage}" stage? Look for language like "must be a completed feature," "screenplays in development only," "accepting rough cuts," "projects entering post-production," etc.
+
+GATE 2 — GENRE/FORMAT:
+Does this opportunity accept "${project.format}" ${project.genre ? "in the \"" + project.genre + "\" genre" : ""}? Look for format restrictions (narrative vs. documentary vs. animation vs. experimental vs. hybrid) and genre restrictions or preferences. A narrative horror project should FAIL a documentary-only grant. A feature-film-only grant should FAIL a short film.
+
+GATE 3 — DEMOGRAPHIC / THEMATIC:
+Does this opportunity have a demographic or thematic eligibility requirement (e.g., "for Jewish filmmakers," "BIPOC-led projects," "LGBTQ+ stories," "women directors")? 
+- If NO such requirement exists (opportunity is demographic/theme-neutral), return null for this gate.
+- If YES: check whether the project qualifies based on the eligibility attributes listed above. If the project's declared attributes include what the opportunity requires, pass. If the opportunity requires an attribute the project does NOT declare, fail. If ambiguous, uncertain.
+
+═══════════════════════════════════════════
+RULES — READ CAREFULLY
+═══════════════════════════════════════════
+1. "Uncertain" is a VALID and IMPORTANT answer. Do NOT fabricate. If you cannot locate the eligibility page, return uncertain with a note explaining what you couldn't find.
+2. "Fail" requires CONFIDENT evidence the project does not qualify. Not a hunch.
+3. "Pass" requires CONFIDENT evidence the project does qualify. Not an assumption.
+4. Evidence must be a SPECIFIC phrase or clear paraphrase from the actual guidelines — NOT general knowledge about the opportunity.
+5. A team member's adjacent experience does NOT make a project eligible for a different genre/format. A documentary producer on a horror feature does not make the horror feature eligible for a documentary grant.
+6. Always include the sourceUrl where you found the evidence. Use the most specific URL possible (the eligibility page, not the homepage).
+
+═══════════════════════════════════════════
+OUTPUT FORMAT
+═══════════════════════════════════════════
+Respond ONLY with JSON (no markdown, no commentary):
+{
+  "stageGate": {
+    "verdict": "pass" | "fail" | "uncertain",
+    "evidence": "exact phrase or paraphrase from guidelines",
+    "sourceUrl": "URL where you found this evidence",
+    "concern": "explanation if fail or uncertain, else empty string"
+  },
+  "genreGate": {
+    "verdict": "pass" | "fail" | "uncertain",
+    "evidence": "...",
+    "sourceUrl": "...",
+    "concern": "..."
+  },
+  "demographicGate": null,
+  "overallVerdict": "verified" | "fail" | "uncertain"
+}
+
+If there is a demographic/thematic gate, replace null with the same object shape as the other gates.
+
+overallVerdict rules:
+- "verified" if all non-null gates return "pass"
+- "fail" if ANY gate returns "fail"
+- "uncertain" if no gate fails but at least one gate is "uncertain"`;
+
+    const response = await askClaude(prompt, true); // use web search
+    const result = extractJSON(response);
+
+    // Defensive shape check
+    if (!result || typeof result !== "object") {
+      return {
+        overallVerdict: "uncertain",
+        error: "could not parse verification response",
+        stageGate: null,
+        genreGate: null,
+        demographicGate: null
+      };
+    }
+
+    // Ensure overallVerdict is present and valid
+    const validVerdicts = ["verified", "fail", "uncertain"];
+    if (!validVerdicts.includes(result.overallVerdict)) {
+      // Derive from gates if missing
+      const gates = [result.stageGate, result.genreGate, result.demographicGate].filter(g => g && g.verdict);
+      if (gates.some(g => g.verdict === "fail")) result.overallVerdict = "fail";
+      else if (gates.every(g => g.verdict === "pass") && gates.length > 0) result.overallVerdict = "verified";
+      else result.overallVerdict = "uncertain";
+    }
+
+    result.verifiedAt = new Date().toISOString();
+    return result;
+  };
+
+  // AUDIT — Verify eligibility of all draft/approved applications against their projects.
+  // Runs verifyOpportunityFit for each draft app, in batches of 5 to respect rate limits.
+  // Calls onProgress(done, total) after each batch so the UI can show progress.
+  // Calls onDone(results) when finished.
+  // Returns a cancellation function — call it to abort further batches (in-flight calls will still complete).
+  const runAuditDrafts = (onProgress, onDone) => {
+    const allApps = appsRef.current;
+    const allProjects = projectsRef.current;
+    // Target: draft + approved applications (not submitted — those are settled)
+    const targets = allApps.filter(a => a.status === "draft" || a.status === "approved");
+
+    if (targets.length === 0) {
+      if (onDone) onDone([]);
+      return () => {};
+    }
+
+    let cancelled = false;
+    const results = [];
+
+    (async () => {
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < targets.length; i += BATCH_SIZE) {
+        if (cancelled) break;
+        const batch = targets.slice(i, i + BATCH_SIZE);
+        const batchResults = await Promise.all(
+          batch.map(async (app) => {
+            const project = allProjects.find(p => p.title === app.projTitle);
+            if (!project) {
+              return {
+                appId: app.id,
+                oppName: app.oppName,
+                oppOrg: app.oppOrg,
+                projTitle: app.projTitle,
+                verification: {
+                  overallVerdict: "uncertain",
+                  error: "project not found — can't verify",
+                  stageGate: null,
+                  genreGate: null,
+                  demographicGate: null
+                }
+              };
+            }
+            // Construct a candidate object from the app's data for verification
+            const candidate = {
+              name: app.oppName,
+              organization: app.oppOrg,
+              type: app.oppType,
+              url: app.oppUrl,
+              description: (app.content && app.content.requirements && app.content.requirements.summary) || ""
+            };
+            try {
+              const verification = await verifyOpportunityFit(candidate, project);
+              return {
+                appId: app.id,
+                oppName: app.oppName,
+                oppOrg: app.oppOrg,
+                projTitle: app.projTitle,
+                verification
+              };
+            } catch (err) {
+              return {
+                appId: app.id,
+                oppName: app.oppName,
+                oppOrg: app.oppOrg,
+                projTitle: app.projTitle,
+                verification: {
+                  overallVerdict: "uncertain",
+                  error: err.message || "verification failed",
+                  stageGate: null,
+                  genreGate: null,
+                  demographicGate: null
+                }
+              };
+            }
+          })
+        );
+        if (cancelled) break;
+        results.push(...batchResults);
+
+        // Persist audit results onto the apps immediately (so if user closes modal mid-audit, progress is saved)
+        const current = appsRef.current;
+        const updated = current.map(a => {
+          const hit = batchResults.find(r => r.appId === a.id);
+          if (!hit) return a;
+          return {
+            ...a,
+            auditResult: hit.verification,
+            auditedAt: new Date().toISOString(),
+            auditFlagDismissed: false // reset any prior dismissal on re-audit
+          };
+        });
+        sApps(updated);
+
+        if (onProgress) onProgress(Math.min(i + BATCH_SIZE, targets.length), targets.length);
+      }
+      if (!cancelled && onDone) onDone(results);
+    })();
+
+    return () => { cancelled = true; };
   };
 
   // Background: Generate an application
@@ -2277,6 +2573,7 @@ Respond ONLY with JSON (no markdown):
             runGenerate={runGenerate}
             dismissJob={dismissJob}
             runRefreshApp={runRefreshApp}
+            runAuditDrafts={runAuditDrafts}
             fieldLibrary={fieldLibrary}
             getFieldsFromLibrary={getFieldsFromLibrary}
             saveFieldsToLibrary={saveFieldsToLibrary}
@@ -2725,7 +3022,8 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
     runtime: "",
     targetAudience: "",
     themes: "",
-    teamNotes: ""
+    teamNotes: "",
+    eligibilityAttributes: []  // array of stable keys like "bipoc-team", "jewish-themes", etc.
   };
 
   const [form, setForm] = useState(emptyForm);
@@ -3221,6 +3519,69 @@ function ProjView({ projects, save, profile, jobs, runAnalyze, dismissJob, apps,
                 onChange={e => setForm({ ...form, teamNotes: e.target.value })}
               />
             </div>
+
+            {/* Eligibility Attributes — used by discovery verification to filter demographic/thematic grants */}
+            <div style={{ gridColumn: "1 / -1", marginTop: "4px" }}>
+              <label style={LS}>Eligibility Attributes (Optional)</label>
+              <p style={{ fontSize: "11px", color: C.tm, lineHeight: 1.5, marginBottom: "10px" }}>
+                Help discovery find grants that fund teams or stories like this one, and filter out ones that require attributes you don't have. Leave blank if none apply.
+              </p>
+              {(() => {
+                const attrs = form.eligibilityAttributes || [];
+                const toggle = (key) => {
+                  const current = form.eligibilityAttributes || [];
+                  const updated = current.includes(key)
+                    ? current.filter(k => k !== key)
+                    : [...current, key];
+                  setForm({ ...form, eligibilityAttributes: updated });
+                };
+                const teamAttrs = ELIGIBILITY_ATTRIBUTES.filter(a => a.group === "team");
+                const themeAttrs = ELIGIBILITY_ATTRIBUTES.filter(a => a.group === "themes");
+                const renderGroup = (label, group) => (
+                  <div style={{ marginBottom: "12px" }}>
+                    <p style={{
+                      fontFamily: FN.m,
+                      fontSize: "10px",
+                      color: C.td,
+                      letterSpacing: "0.06em",
+                      textTransform: "uppercase",
+                      marginBottom: "6px"
+                    }}>{label}</p>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                      {group.map(a => {
+                        const on = attrs.includes(a.key);
+                        return (
+                          <button
+                            key={a.key}
+                            type="button"
+                            onClick={() => toggle(a.key)}
+                            style={{
+                              fontFamily: FN.m,
+                              fontSize: "12px",
+                              padding: "5px 10px",
+                              borderRadius: "14px",
+                              border: "1px solid " + (on ? C.ac : C.bd),
+                              background: on ? C.ac + "20" : "transparent",
+                              color: on ? C.ac : C.tm,
+                              cursor: "pointer",
+                              transition: "all 0.15s"
+                            }}
+                          >
+                            {on ? "✓ " : ""}{a.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+                return (
+                  <div>
+                    {renderGroup("Team includes", teamAttrs)}
+                    {renderGroup("Project involves", themeAttrs)}
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         </Card>
 
@@ -3709,12 +4070,34 @@ function DiscView({
 
       {!busy && results.length > 0 && (
         <div>
-          <p style={{
-            fontFamily: FN.m,
-            fontSize: "11px",
-            color: C.td,
-            marginBottom: "14px"
-          }}>{results.length} FOUND · SORTED BY MATCH</p>
+          {(() => {
+            const verified = results.filter(r => r.verification?.overallVerdict === "verified").length;
+            const uncertain = results.filter(r => r.verification?.overallVerdict === "uncertain").length;
+            const pending = results.filter(r => r.verification?.overallVerdict === "pending").length;
+            const unverified = results.filter(r => !r.verification).length;
+            const parts = [];
+            if (verified > 0) parts.push({ color: C.ok, text: verified + " verified" });
+            if (uncertain > 0) parts.push({ color: C.wn, text: uncertain + " uncertain" });
+            if (pending > 0) parts.push({ color: C.tl, text: pending + " verifying" });
+            if (unverified > 0) parts.push({ color: C.tm, text: unverified + " unverified" });
+            return (
+              <div style={{ marginBottom: "14px" }}>
+                <p style={{
+                  fontFamily: FN.m,
+                  fontSize: "11px",
+                  color: C.td,
+                  marginBottom: "4px"
+                }}>{results.length} FOUND · SORTED BY VERIFICATION + MATCH</p>
+                {parts.length > 0 && (
+                  <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", fontSize: "11px", fontFamily: FN.m }}>
+                    {parts.map((p, i) => (
+                      <span key={i} style={{ color: p.color }}>● {p.text}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {results.map((o, i) => {
             const mc = {
               strong: C.ok,
@@ -3755,6 +4138,15 @@ function DiscView({
                       <Bdg color={mc[o.matchStrength] || C.td}>
                         {o.matchStrength}
                       </Bdg>
+                      {o.verification && o.verification.overallVerdict === "verified" && (
+                        <Bdg color={C.ok}>✓ VERIFIED</Bdg>
+                      )}
+                      {o.verification && o.verification.overallVerdict === "uncertain" && (
+                        <Bdg color={C.wn}>⚠ VERIFY</Bdg>
+                      )}
+                      {o.verification && o.verification.overallVerdict === "pending" && (
+                        <Bdg color={C.tl}>⏳ VERIFYING</Bdg>
+                      )}
                       {existingApp && (
                         <Bdg color={
                           existingApp.status === "submitted" ? C.ok :
@@ -3812,23 +4204,85 @@ function DiscView({
                   }}>WHY THIS FITS</p>
                   <p style={{ fontSize: "13px", lineHeight: 1.5 }}>{o.matchReason}</p>
                 </div>
-                {o.stageEligibility && (
-                  <div style={{
-                    background: C.tl + "08",
-                    border: "1px solid " + C.tl + "20",
-                    borderRadius: "6px",
-                    padding: "10px 12px",
-                    marginBottom: "10px"
-                  }}>
-                    <p style={{
-                      fontSize: "11px",
-                      fontFamily: FN.m,
-                      color: C.tl,
-                      marginBottom: "4px"
-                    }}>STAGE MATCH</p>
-                    <p style={{ fontSize: "12px", lineHeight: 1.5, color: C.tm }}>{o.stageEligibility}</p>
-                  </div>
-                )}
+                {o.verification && o.verification.overallVerdict !== "pending" && (() => {
+                  const v = o.verification;
+                  const gates = [
+                    { key: "stageGate", label: "Stage", icon: "🎬" },
+                    { key: "genreGate", label: "Genre / Format", icon: "🎭" },
+                    { key: "demographicGate", label: "Demographic / Thematic", icon: "👥" }
+                  ].filter(g => v[g.key]); // skip nulls
+                  const isOk = v.overallVerdict === "verified";
+                  const borderCol = isOk ? C.ok : (v.overallVerdict === "uncertain" ? C.wn : C.dn);
+                  return (
+                    <details style={{
+                      background: borderCol + "08",
+                      border: "1px solid " + borderCol + "30",
+                      borderRadius: "6px",
+                      padding: "8px 12px",
+                      marginBottom: "10px"
+                    }}>
+                      <summary style={{
+                        fontSize: "11px",
+                        fontFamily: FN.m,
+                        color: borderCol,
+                        cursor: "pointer",
+                        letterSpacing: "0.04em"
+                      }}>
+                        {isOk ? "✓ ELIGIBILITY VERIFIED" :
+                          v.overallVerdict === "uncertain" ? "⚠ ELIGIBILITY UNCERTAIN — review evidence" :
+                          "✗ ELIGIBILITY FAILED"} — click to see evidence
+                      </summary>
+                      <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                        {gates.map(g => {
+                          const gate = v[g.key];
+                          const vc = gate.verdict === "pass" ? C.ok : gate.verdict === "fail" ? C.dn : C.wn;
+                          const vsym = gate.verdict === "pass" ? "✓" : gate.verdict === "fail" ? "✗" : "⚠";
+                          return (
+                            <div key={g.key} style={{
+                              padding: "8px 10px",
+                              background: C.bg,
+                              borderLeft: "3px solid " + vc,
+                              borderRadius: "3px"
+                            }}>
+                              <p style={{
+                                fontFamily: FN.m,
+                                fontSize: "11px",
+                                color: vc,
+                                marginBottom: "4px",
+                                letterSpacing: "0.04em"
+                              }}>
+                                {vsym} {g.label.toUpperCase()}: {(gate.verdict || "").toUpperCase()}
+                              </p>
+                              {gate.evidence && (
+                                <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5, marginBottom: "4px" }}>
+                                  {gate.evidence}
+                                </p>
+                              )}
+                              {gate.concern && (
+                                <p style={{ fontSize: "11px", color: C.tm, lineHeight: 1.5, marginBottom: "4px", fontStyle: "italic" }}>
+                                  {gate.concern}
+                                </p>
+                              )}
+                              {gate.sourceUrl && (
+                                <a href={gate.sourceUrl} target="_blank" rel="noopener noreferrer" style={{
+                                  color: C.tl,
+                                  fontSize: "10px",
+                                  fontFamily: FN.m,
+                                  wordBreak: "break-all"
+                                }}>source: {gate.sourceUrl}</a>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {v.error && (
+                          <p style={{ fontSize: "11px", color: C.dn, fontStyle: "italic" }}>
+                            Verification error: {v.error}
+                          </p>
+                        )}
+                      </div>
+                    </details>
+                  );
+                })()}
                 {o.teamAdvantage && (
                   <div style={{
                     background: C.ok + "10",
@@ -4187,7 +4641,7 @@ function DeadView({ deadlines, opps, save, go }) {
    APPLICATIONS
    ═══════════════════════════════════════════════════ */
 
-function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate, dismissJob, runRefreshApp, fieldLibrary, getFieldsFromLibrary, saveFieldsToLibrary, deleteFieldLibraryEntry, updateFieldLibraryNotes }) {
+function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate, dismissJob, runRefreshApp, runAuditDrafts, fieldLibrary, getFieldsFromLibrary, saveFieldsToLibrary, deleteFieldLibraryEntry, updateFieldLibraryNotes }) {
   const [selO, setSelO] = useState(null);
   const [selP, setSelP] = useState(0);
   const [view, setView] = useState(null);
@@ -4214,6 +4668,14 @@ function AppsView({ profile, projects, opps, apps, save, pay, jobs, runGenerate,
   // When set, saving the Edit Structure modal also triggers regenerate on this app.
   // Used by the "Edit structure & regenerate" flow from the draft detail view.
   const [structureRegenerateAppId, setStructureRegenerateAppId] = useState(null);
+
+  // AUDIT state — verifies eligibility of all draft/approved apps against their projects.
+  // auditStep: "idle" (nothing running, no results) | "confirm" (confirmation modal) |
+  //            "running" (audit in progress) | "done" (showing results)
+  const [auditStep, setAuditStep] = useState("idle");
+  const [auditProgress, setAuditProgress] = useState({ done: 0, total: 0 });
+  const [auditResults, setAuditResults] = useState([]);
+  const [auditCancelFn, setAuditCancelFn] = useState(null);
 
   // Parse manual field text into array of { fieldName, wordLimit }
   // Format: one field per line, "Field Name | word limit" (pipe-separated)
@@ -4772,6 +5234,374 @@ Artistic Statement | 500 words`}</pre>
       </Mdl>
   );
 
+  // AUDIT MODAL — compound modal that shows one of three states based on auditStep.
+  // "confirm": pre-audit explanation + Start button
+  // "running": progress indicator with cancel
+  // "done":    grouped results with per-item actions
+  const auditMdlJsx = (() => {
+    const auditTargets = apps.filter(a => a.status === "draft" || a.status === "approved");
+    const closeAudit = () => {
+      setAuditStep("idle");
+      setAuditResults([]);
+      setAuditProgress({ done: 0, total: 0 });
+      setAuditCancelFn(null);
+    };
+
+    const startAudit = () => {
+      setAuditStep("running");
+      setAuditProgress({ done: 0, total: auditTargets.length });
+      const cancel = runAuditDrafts(
+        (done, total) => setAuditProgress({ done, total }),
+        (results) => {
+          setAuditResults(results);
+          setAuditStep("done");
+          setAuditCancelFn(null);
+        }
+      );
+      setAuditCancelFn(() => cancel);
+    };
+
+    const cancelRunningAudit = () => {
+      if (auditCancelFn) auditCancelFn();
+      setAuditStep("idle");
+      setAuditCancelFn(null);
+    };
+
+    // Group results by verdict
+    const failed = auditResults.filter(r => r.verification?.overallVerdict === "fail");
+    const uncertain = auditResults.filter(r => r.verification?.overallVerdict === "uncertain");
+    const verified = auditResults.filter(r => r.verification?.overallVerdict === "verified");
+
+    // Per-item actions used in results view
+    const openAppDetail = (appId) => {
+      const idx = apps.findIndex(a => a.id === appId);
+      if (idx === -1) return;
+      setView(idx);
+      closeAudit();
+    };
+
+    const deleteApp = (appId) => {
+      const app = apps.find(a => a.id === appId);
+      if (!app) return;
+      if (!confirm("Delete the draft application for " + app.oppName + "? This cannot be undone.")) return;
+      save(apps.filter(a => a.id !== appId));
+      // Also remove from local audit results so it disappears from the modal
+      setAuditResults(auditResults.filter(r => r.appId !== appId));
+    };
+
+    const dismissFlag = (appId) => {
+      const updated = apps.map(a => a.id === appId ? { ...a, auditFlagDismissed: true } : a);
+      save(updated);
+    };
+
+    // Render a single result row with expandable evidence and action buttons
+    const renderResultItem = (r) => {
+      const v = r.verification;
+      const vc = v?.overallVerdict === "verified" ? C.ok : v?.overallVerdict === "fail" ? C.dn : C.wn;
+      const gates = [
+        { key: "stageGate", label: "Stage" },
+        { key: "genreGate", label: "Genre/Format" },
+        { key: "demographicGate", label: "Demographic/Thematic" }
+      ].filter(g => v && v[g.key]);
+      const stillExists = !!apps.find(a => a.id === r.appId);
+      if (!stillExists) return null;
+
+      return (
+        <div key={r.appId} style={{
+          padding: "12px 14px",
+          background: C.bg,
+          border: "1px solid " + vc + "40",
+          borderLeft: "3px solid " + vc,
+          borderRadius: "6px",
+          marginBottom: "10px"
+        }}>
+          <div style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: "10px",
+            flexWrap: "wrap",
+            marginBottom: "6px"
+          }}>
+            <div style={{ flex: 1, minWidth: "200px" }}>
+              <p style={{ fontSize: "14px", fontWeight: 600, color: C.tx, marginBottom: "2px" }}>
+                {r.oppName}
+              </p>
+              <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m }}>
+                {r.oppOrg} · {r.projTitle}
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+              <Btn variant="ghost" small onClick={() => openAppDetail(r.appId)}>
+                View app
+              </Btn>
+              {v?.overallVerdict === "fail" && (
+                <Btn variant="danger" small onClick={() => deleteApp(r.appId)}>
+                  Delete draft
+                </Btn>
+              )}
+              {(v?.overallVerdict === "fail" || v?.overallVerdict === "uncertain") && (
+                <Btn variant="ghost" small onClick={() => dismissFlag(r.appId)}>
+                  Dismiss flag
+                </Btn>
+              )}
+            </div>
+          </div>
+          {v?.error && (
+            <p style={{ fontSize: "12px", color: C.dn, fontStyle: "italic", marginBottom: "6px" }}>
+              Verification error: {v.error}
+            </p>
+          )}
+          {gates.length > 0 && (
+            <details style={{ marginTop: "4px" }}>
+              <summary style={{
+                fontSize: "11px",
+                color: C.tm,
+                cursor: "pointer",
+                fontFamily: FN.m,
+                letterSpacing: "0.04em"
+              }}>
+                Show evidence ({gates.length} gate{gates.length === 1 ? "" : "s"})
+              </summary>
+              <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                {gates.map(g => {
+                  const gate = v[g.key];
+                  const gcolor = gate.verdict === "pass" ? C.ok : gate.verdict === "fail" ? C.dn : C.wn;
+                  const gsym = gate.verdict === "pass" ? "✓" : gate.verdict === "fail" ? "✗" : "⚠";
+                  return (
+                    <div key={g.key} style={{
+                      padding: "6px 10px",
+                      background: C.sf,
+                      borderLeft: "2px solid " + gcolor,
+                      borderRadius: "3px"
+                    }}>
+                      <p style={{
+                        fontFamily: FN.m,
+                        fontSize: "10px",
+                        color: gcolor,
+                        marginBottom: "3px",
+                        letterSpacing: "0.04em"
+                      }}>
+                        {gsym} {g.label.toUpperCase()}: {(gate.verdict || "").toUpperCase()}
+                      </p>
+                      {gate.evidence && (
+                        <p style={{ fontSize: "11px", color: C.tx, lineHeight: 1.5, marginBottom: "3px" }}>
+                          {gate.evidence}
+                        </p>
+                      )}
+                      {gate.concern && (
+                        <p style={{ fontSize: "11px", color: C.tm, lineHeight: 1.5, marginBottom: "3px", fontStyle: "italic" }}>
+                          {gate.concern}
+                        </p>
+                      )}
+                      {gate.sourceUrl && (
+                        <a href={gate.sourceUrl} target="_blank" rel="noopener noreferrer" style={{
+                          color: C.tl,
+                          fontSize: "10px",
+                          fontFamily: FN.m,
+                          wordBreak: "break-all"
+                        }}>
+                          source: {gate.sourceUrl}
+                        </a>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
+          )}
+        </div>
+      );
+    };
+
+    return (
+      <Mdl
+        open={auditStep !== "idle"}
+        onClose={auditStep === "running" ? () => {} : closeAudit}
+        title={
+          auditStep === "confirm" ? "Audit Draft Applications" :
+          auditStep === "running" ? "Auditing Applications..." :
+          "Audit Results"
+        }
+        width="720px"
+      >
+        {auditStep === "confirm" && (
+          <div>
+            <p style={{ fontSize: "13px", color: C.tx, lineHeight: 1.6, marginBottom: "14px" }}>
+              This will verify <strong>{auditTargets.length}</strong> draft and approved application{auditTargets.length === 1 ? "" : "s"} against their actual eligibility requirements.
+            </p>
+            <div style={{
+              padding: "12px 14px",
+              background: C.bg,
+              border: "1px solid " + C.bd,
+              borderRadius: "6px",
+              marginBottom: "14px"
+            }}>
+              <p style={{ fontSize: "12px", color: C.tm, lineHeight: 1.6, marginBottom: "8px" }}>
+                For each application, the engine will:
+              </p>
+              <ul style={{ fontSize: "12px", color: C.tm, lineHeight: 1.7, paddingLeft: "20px", margin: 0 }}>
+                <li>Look up the opportunity's current eligibility guidelines via web search</li>
+                <li>Check three gates: stage (development / production / completed, etc.), genre/format, and demographic/thematic fit</li>
+                <li>Report any mismatches with evidence quoted from the source</li>
+              </ul>
+            </div>
+            <div style={{
+              padding: "10px 12px",
+              background: C.wn + "10",
+              border: "1px solid " + C.wn + "30",
+              borderRadius: "6px",
+              marginBottom: "16px"
+            }}>
+              <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5 }}>
+                ⏱ Estimated time: <strong>~{Math.ceil(auditTargets.length / 5)}-{Math.ceil(auditTargets.length / 5) * 2} minutes</strong> (5 checks run in parallel). Each verification uses web search. Nothing is deleted automatically — you decide what to do with flagged items.
+              </p>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+              <Btn variant="secondary" onClick={closeAudit}>Cancel</Btn>
+              <Btn variant="primary" onClick={startAudit} disabled={auditTargets.length === 0}>
+                🔍 Start audit
+              </Btn>
+            </div>
+          </div>
+        )}
+
+        {auditStep === "running" && (
+          <div>
+            <p style={{ fontSize: "13px", color: C.tx, lineHeight: 1.6, marginBottom: "16px" }}>
+              Verifying applications against their projects' eligibility...
+            </p>
+            {/* Progress bar */}
+            <div style={{
+              height: "8px",
+              background: C.bd,
+              borderRadius: "4px",
+              overflow: "hidden",
+              marginBottom: "8px"
+            }}>
+              <div style={{
+                height: "100%",
+                width: auditProgress.total > 0 ? (auditProgress.done / auditProgress.total * 100) + "%" : "0%",
+                background: C.tl,
+                transition: "width 0.3s ease"
+              }} />
+            </div>
+            <p style={{ fontSize: "12px", color: C.tm, fontFamily: FN.m, marginBottom: "20px" }}>
+              {auditProgress.done} of {auditProgress.total} complete
+            </p>
+            <div style={{
+              padding: "10px 12px",
+              background: C.bg,
+              border: "1px solid " + C.bd,
+              borderRadius: "6px",
+              marginBottom: "16px"
+            }}>
+              <p style={{ fontSize: "11px", color: C.tm, lineHeight: 1.5 }}>
+                💡 You can close this modal — the audit continues in the background and results are saved to each application as they complete. You'll see flags on the Applications list when it's done.
+              </p>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+              <Btn variant="secondary" onClick={closeAudit}>
+                Run in background
+              </Btn>
+              <Btn variant="danger" onClick={cancelRunningAudit}>
+                Cancel audit
+              </Btn>
+            </div>
+          </div>
+        )}
+
+        {auditStep === "done" && (
+          <div>
+            {/* Summary counts */}
+            <div style={{
+              display: "flex",
+              gap: "20px",
+              marginBottom: "20px",
+              flexWrap: "wrap"
+            }}>
+              <div>
+                <p style={{ fontFamily: FN.d, fontSize: "28px", fontStyle: "italic", color: C.dn }}>
+                  {failed.length}
+                </p>
+                <p style={{ ...LS, color: C.dn, marginBottom: 0 }}>FAILED</p>
+              </div>
+              <div>
+                <p style={{ fontFamily: FN.d, fontSize: "28px", fontStyle: "italic", color: C.wn }}>
+                  {uncertain.length}
+                </p>
+                <p style={{ ...LS, color: C.wn, marginBottom: 0 }}>UNCERTAIN</p>
+              </div>
+              <div>
+                <p style={{ fontFamily: FN.d, fontSize: "28px", fontStyle: "italic", color: C.ok }}>
+                  {verified.length}
+                </p>
+                <p style={{ ...LS, color: C.ok, marginBottom: 0 }}>VERIFIED</p>
+              </div>
+            </div>
+
+            {auditResults.length === 0 && (
+              <p style={{ fontSize: "13px", color: C.tm, lineHeight: 1.6, marginBottom: "16px" }}>
+                No draft applications to audit.
+              </p>
+            )}
+
+            {failed.length > 0 && (
+              <div style={{ marginBottom: "20px" }}>
+                <p style={{ ...LS, color: C.dn, marginBottom: "8px" }}>
+                  ✗ FAILED — DO NOT SUBMIT
+                </p>
+                <p style={{ fontSize: "12px", color: C.tm, marginBottom: "10px", lineHeight: 1.5 }}>
+                  The engine found clear evidence these applications don't qualify. Review the evidence and decide whether to delete the draft.
+                </p>
+                {failed.map(renderResultItem)}
+              </div>
+            )}
+
+            {uncertain.length > 0 && (
+              <div style={{ marginBottom: "20px" }}>
+                <p style={{ ...LS, color: C.wn, marginBottom: "8px" }}>
+                  ⚠ UNCERTAIN — REVIEW
+                </p>
+                <p style={{ fontSize: "12px", color: C.tm, marginBottom: "10px", lineHeight: 1.5 }}>
+                  Eligibility couldn't be confirmed. Review the evidence, or check the guidelines page directly.
+                </p>
+                {uncertain.map(renderResultItem)}
+              </div>
+            )}
+
+            {verified.length > 0 && (
+              <details style={{ marginBottom: "20px" }}>
+                <summary style={{
+                  ...LS,
+                  color: C.ok,
+                  marginBottom: "8px",
+                  cursor: "pointer",
+                  userSelect: "none"
+                }}>
+                  ✓ VERIFIED ({verified.length}) — click to show
+                </summary>
+                <div style={{ marginTop: "10px" }}>
+                  {verified.map(renderResultItem)}
+                </div>
+              </details>
+            )}
+
+            <div style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: "8px",
+              paddingTop: "12px",
+              borderTop: "1px solid " + C.bd
+            }}>
+              <Btn variant="primary" onClick={closeAudit}>Close</Btn>
+            </div>
+          </div>
+        )}
+      </Mdl>
+    );
+  })();
+
   /* ── VIEW APP (detail view rendered inline, not early-returned) ── */
   const detailView = (view !== null && apps[view]) ? (() => {
     const app = apps[view];
@@ -5039,6 +5869,122 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
             </div>
           </div>
         </Card>
+
+        {/* AUDIT FLAG — shown when app has been audited and failed or uncertain (and flag not dismissed) */}
+        {app.auditResult && !app.auditFlagDismissed && (app.auditResult.overallVerdict === "fail" || app.auditResult.overallVerdict === "uncertain") && (() => {
+          const isFail = app.auditResult.overallVerdict === "fail";
+          const bc = isFail ? C.dn : C.wn;
+          const gates = [
+            { key: "stageGate", label: "Stage" },
+            { key: "genreGate", label: "Genre/Format" },
+            { key: "demographicGate", label: "Demographic/Thematic" }
+          ].filter(g => app.auditResult[g.key]);
+          return (
+            <Card style={{
+              marginBottom: "12px",
+              background: bc + "08",
+              borderColor: bc + "50"
+            }}>
+              <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                gap: "12px",
+                flexWrap: "wrap",
+                marginBottom: "8px"
+              }}>
+                <div style={{ flex: 1, minWidth: "240px" }}>
+                  <p style={{
+                    fontSize: "14px",
+                    fontWeight: 600,
+                    color: bc,
+                    marginBottom: "4px"
+                  }}>
+                    {isFail
+                      ? "✗ Audit Failed — This Application May Not Qualify"
+                      : "⚠ Audit Uncertain — Eligibility Not Confirmed"}
+                  </p>
+                  <p style={{ fontSize: "12px", color: C.tm, lineHeight: 1.5 }}>
+                    {isFail
+                      ? "The audit found evidence this project may not meet the opportunity's eligibility. Review the evidence below before submitting."
+                      : "The audit couldn't confirm this project meets all eligibility requirements. Check the details below."}
+                    {app.auditedAt && " · Audited " + new Date(app.auditedAt).toLocaleDateString()}
+                  </p>
+                </div>
+                <Btn
+                  variant="ghost"
+                  small
+                  onClick={() => {
+                    const updated = apps.map(a =>
+                      a.id === app.id ? { ...a, auditFlagDismissed: true } : a
+                    );
+                    save(updated);
+                  }}
+                >
+                  Dismiss flag
+                </Btn>
+              </div>
+              {gates.length > 0 && (
+                <details style={{ marginTop: "8px" }}>
+                  <summary style={{
+                    fontSize: "11px",
+                    color: bc,
+                    cursor: "pointer",
+                    fontFamily: FN.m,
+                    letterSpacing: "0.04em"
+                  }}>
+                    Show audit evidence ({gates.length} gate{gates.length === 1 ? "" : "s"})
+                  </summary>
+                  <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {gates.map(g => {
+                      const gate = app.auditResult[g.key];
+                      const gcolor = gate.verdict === "pass" ? C.ok : gate.verdict === "fail" ? C.dn : C.wn;
+                      const gsym = gate.verdict === "pass" ? "✓" : gate.verdict === "fail" ? "✗" : "⚠";
+                      return (
+                        <div key={g.key} style={{
+                          padding: "8px 10px",
+                          background: C.bg,
+                          borderLeft: "2px solid " + gcolor,
+                          borderRadius: "3px"
+                        }}>
+                          <p style={{
+                            fontFamily: FN.m,
+                            fontSize: "10px",
+                            color: gcolor,
+                            marginBottom: "3px",
+                            letterSpacing: "0.04em"
+                          }}>
+                            {gsym} {g.label.toUpperCase()}: {(gate.verdict || "").toUpperCase()}
+                          </p>
+                          {gate.evidence && (
+                            <p style={{ fontSize: "12px", color: C.tx, lineHeight: 1.5, marginBottom: "3px" }}>
+                              {gate.evidence}
+                            </p>
+                          )}
+                          {gate.concern && (
+                            <p style={{ fontSize: "11px", color: C.tm, lineHeight: 1.5, marginBottom: "3px", fontStyle: "italic" }}>
+                              {gate.concern}
+                            </p>
+                          )}
+                          {gate.sourceUrl && (
+                            <a href={gate.sourceUrl} target="_blank" rel="noopener noreferrer" style={{
+                              color: C.tl,
+                              fontSize: "10px",
+                              fontFamily: FN.m,
+                              wordBreak: "break-all"
+                            }}>
+                              source: {gate.sourceUrl}
+                            </a>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+              )}
+            </Card>
+          );
+        })()}
 
         {/* TOOLS — always visible on non-submitted apps */}
         {app.status !== "submitted" && (
@@ -6342,6 +7288,7 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
         {detailView}
         {/* Shared Edit Structure modal — rendered here so it works from detail view too */}
         {structureMdlJsx}
+        {auditMdlJsx}
       </>
     );
   }
@@ -6393,11 +7340,17 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                     onChange={e => setSelO(e.target.value === "" ? null : parseInt(e.target.value))}
                   >
                     <option value="">Select...</option>
-                    {available.map(({ o, i }) => (
-                      <option key={i} value={i}>
-                        {o.name} — {o.submissionFee || "?"}
-                      </option>
-                    ))}
+                    {available.map(({ o, i }) => {
+                      const vv = o.verification?.overallVerdict;
+                      const vPrefix = vv === "verified" ? "✓ " :
+                                      vv === "uncertain" ? "⚠ " :
+                                      "";
+                      return (
+                        <option key={i} value={i}>
+                          {vPrefix}{o.name} — {o.submissionFee || "?"}
+                        </option>
+                      );
+                    })}
                   </select>
                   {hiddenCount > 0 && (
                     <p style={{
@@ -6653,23 +7606,43 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                   </div>
                 </Card>
 
-                {/* Filter tabs */}
+                {/* Filter tabs + Audit action */}
                 <div style={{
                   display: "flex",
                   gap: "6px",
                   marginBottom: "14px",
-                  flexWrap: "wrap"
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  justifyContent: "space-between"
                 }}>
-                  {filterOptions.map(f => (
-                    <Btn
-                      key={f.id}
-                      variant={listFilter === f.id ? "primary" : "secondary"}
-                      small
-                      onClick={() => setListFilter(f.id)}
-                    >
-                      {f.label} ({f.count})
-                    </Btn>
-                  ))}
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                    {filterOptions.map(f => (
+                      <Btn
+                        key={f.id}
+                        variant={listFilter === f.id ? "primary" : "secondary"}
+                        small
+                        onClick={() => setListFilter(f.id)}
+                      >
+                        {f.label} ({f.count})
+                      </Btn>
+                    ))}
+                  </div>
+                  {(() => {
+                    const draftOrApprovedCount = apps.filter(a => a.status === "draft" || a.status === "approved").length;
+                    if (draftOrApprovedCount === 0) return null;
+                    return (
+                      <Btn
+                        variant="teal"
+                        small
+                        onClick={() => setAuditStep("confirm")}
+                        disabled={auditStep === "running"}
+                      >
+                        {auditStep === "running"
+                          ? `🔍 Auditing ${auditProgress.done}/${auditProgress.total}...`
+                          : "🔍 Audit drafts"}
+                      </Btn>
+                    );
+                  })()}
                 </div>
               </div>
             );
@@ -6729,6 +7702,16 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                     {app.hadFiles && <span>📎</span>}
                     {app.deepResearch && <span title="Deep opportunity research">🔍</span>}
                     {isStale(app) && <Bdg color={C.wn}>STALE</Bdg>}
+                    {/* Audit flags — only show if not dismissed and verdict is problematic */}
+                    {app.auditResult && !app.auditFlagDismissed && app.auditResult.overallVerdict === "fail" && (
+                      <Bdg color={C.dn}>✗ AUDIT FAIL</Bdg>
+                    )}
+                    {app.auditResult && !app.auditFlagDismissed && app.auditResult.overallVerdict === "uncertain" && (
+                      <Bdg color={C.wn}>⚠ AUDIT UNCERTAIN</Bdg>
+                    )}
+                    {app.auditResult && app.auditResult.overallVerdict === "verified" && (
+                      <Bdg color={C.ok}>✓ AUDITED</Bdg>
+                    )}
                     {app.outcome === "won" && <Bdg color={C.ok}>🏆 WON</Bdg>}
                     {app.outcome === "rejected" && <Bdg color={C.dn}>✗ REJECTED</Bdg>}
                     {app.outcome === "waitlisted" && <Bdg color={C.ac}>⏳ WAITLISTED</Bdg>}
@@ -6763,6 +7746,7 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
       )}
 
       {structureMdlJsx}
+      {auditMdlJsx}
     </div>
   );
 }
