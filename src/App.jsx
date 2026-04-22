@@ -1856,6 +1856,18 @@ VERDICTS:
 - FAIL: You fetched the program's application page (or FAQ) and it explicitly states the program is discontinued, on permanent hiatus, or no future cycle is planned. The evidence is from the program's own current pages, not from a historical article.
 - UNCERTAIN: You did thorough research but could not find definitive current-cycle evidence, OR the pages you found contradict each other ambiguously. This is an HONEST uncertain — not a lazy cop-out. State in your concern what you searched, what you fetched, and what remains unclear.
 
+🚨 PAST CYCLES vs CURRENT CYCLES — CRITICAL DISTINCTION:
+
+Program pages often list BOTH past and current cycle information on the same page. For example:
+  "Applications for 2026 were April 15 – May 14, 2025."
+  "The 2027 cycle will open April 14, 2026 through May 12, 2026."
+
+If you see BOTH on the same page, the CURRENT/UPCOMING cycle is what determines the verdict. Past cycle info is context (proves the program runs annually). Current cycle info is the verdict-relevant evidence.
+
+Apply this test: Does the page list a cycle whose deadline is TODAY OR LATER (${verifyTodayReadable})? If yes → PASS. The fact that a PREVIOUS cycle is listed on the same page is not a FAIL signal. It's just history.
+
+Do NOT anchor on past cycle dates and ignore current cycle dates. If you correctly identify in your own evidence that "X cycle is still in the future from today's date," your verdict MUST be PASS. Do not write "in the future from today" and then return FAIL — that's a direct contradiction.
+
 When FAILing, ALWAYS populate the \`failureType\` field with one of: "discontinued" (program has ended), "on-hold" (paused pending funding/restructuring), "past-deadline" (most recent cycle ended with no future cycle). If unsure which, use "past-deadline" as the default.
 
 DEFAULT BIAS: A FAIL verdict tells the user to delete their draft; a false FAIL destroys real work. UNCERTAIN simply asks the user to verify. Require explicit closure language on the program's application or FAQ page before FAILing. If you only looked at one page, or only at blog/news pages, UNCERTAIN.
@@ -1976,9 +1988,9 @@ overallVerdict rules:
     // only trust FAIL when the model cites explicit closure (discontinued, on-hold,
     // hiatus) via its failureType field. If the model returned FAIL for any other
     // reason — arithmetic error, trusted a stale source, read only a blog post —
-    // downgrade to UNCERTAIN so the user can verify manually.
+    // downgrade to UNCERTAIN (or upgrade to PASS when evidence explicitly supports it).
     //
-    // This is deliberately biased toward UNCERTAIN because false FAILs are
+    // This is deliberately biased toward UNCERTAIN/PASS because false FAILs are
     // destructive (deleted drafts) while false UNCERTAINs just add a review step.
     if (result.availabilityGate && result.availabilityGate.verdict === "fail") {
       const failType = (result.availabilityGate.failureType || "").toLowerCase();
@@ -1987,10 +1999,28 @@ overallVerdict rules:
         failType.includes("hiatus") || failType.includes("paused") ||
         failType.includes("permanently");
 
-      // If the model cited explicit closure, trust it (with a note if JS disagrees on the date).
+      // Check if model's OWN evidence contradicts its FAIL verdict.
+      // This catches cases like Sundance where the model correctly researched,
+      // correctly described the active cycle, and then contradictorily said FAIL.
+      // Only trigger on UNAMBIGUOUS contradiction phrases that cannot be negated
+      // (avoid substrings like "will open" that might match "will NOT open").
+      const evidenceBlob = ((result.availabilityGate.evidence || "") + " " +
+                            (result.availabilityGate.concern || "") + " " +
+                            (result.availabilityGate.actualDeadline || "")).toLowerCase();
+      const evidenceContradictsFail =
+        evidenceBlob.includes("in the future from today") ||
+        evidenceBlob.includes("still in the future") ||
+        evidenceBlob.includes("currently accepting") ||
+        evidenceBlob.includes("now accepting applications") ||
+        evidenceBlob.includes("applications are open") ||
+        evidenceBlob.includes("currently open for submissions") ||
+        evidenceBlob.includes("open for submissions now") ||
+        evidenceBlob.includes("is open") && deadlineStatus.status === "future" ||
+        (evidenceBlob.includes("deadline has not passed") && deadlineStatus.status === "future");
+
       if (isExplicitClosureFail) {
+        // Model cited explicit closure. Trust it (with note if JS disagrees on the date).
         if (deadlineStatus.status === "future") {
-          // Model found closure evidence despite future deadline listing. Trust model.
           const origConcern = result.availabilityGate.concern || "";
           result.availabilityGate.concern =
             "Note: JS detected a future deadline (" + deadlineStatus.date.toISOString().slice(0, 10) + "), " +
@@ -1998,10 +2028,23 @@ overallVerdict rules:
             "AI reasoning: " + (origConcern || "(none)");
         }
         // Otherwise, explicit closure fail — no override needed.
+      } else if (evidenceContradictsFail) {
+        // Model's own evidence explicitly contradicts its FAIL verdict.
+        // Upgrade to PASS — the model did the research, got the right answer in the evidence,
+        // then wrote the wrong verdict. Trust the evidence, not the verdict label.
+        const origConcern = result.availabilityGate.concern || "";
+        const origEvidence = result.availabilityGate.evidence || "";
+        result.availabilityGate.verdict = "pass";
+        result.availabilityGate.concern =
+          "✓ AUTO-UPGRADED to PASS. The AI's own evidence (\"" +
+          origEvidence.slice(0, 200) + (origEvidence.length > 200 ? "..." : "") +
+          "\") confirms an active or upcoming cycle, but its verdict field said FAIL. " +
+          "Trusting the evidence over the verdict label. " +
+          "AI's original concern text: " + (origConcern || "(none)");
+        result._jsOverride = "evidence-contradicts-fail-upgraded-to-pass";
       } else {
-        // Model did NOT cite explicit closure. This is the "past-deadline" class of fail,
-        // which we've seen be wrong repeatedly (stale sources, bad date math, shallow research).
-        // Downgrade to UNCERTAIN regardless of JS status.
+        // Model did NOT cite explicit closure, and evidence doesn't clearly contradict the fail.
+        // Downgrade to UNCERTAIN — could be wrong for many reasons (stale source, shallow research, etc).
         const origConcern = result.availabilityGate.concern || "";
         let downgradeReason;
         if (deadlineStatus.status === "future") {
@@ -2108,15 +2151,53 @@ DEMOGRAPHIC SYNONYMS (recognize as equivalent):
 If this project declares an attribute (see Eligibility Attributes above), treat it as matching synonyms.
 
 ═══════════════════════════════════════════
-YOUR TASK
+YOUR TASK — THOROUGH RESEARCH REQUIRED
 ═══════════════════════════════════════════
-1. Use web search to find ALL the competitions, labs, grants, or programs that "${failedOppOrg}" runs.
-2. For each one, determine whether it accepts projects at "${project.stage}" stage${sib_scriptStatusLabel ? ` (with script status "${sib_scriptStatusLabel}")` : ""} in "${project.format}" format.
-3. Return ONLY the tracks at "${failedOppOrg}" that would accept this specific project. Do NOT include tracks from other organizations.
-4. Exclude the original failed track ("${failedOppName}").
-5. Only include tracks with deadlines TODAY OR LATER. Exclude any past-deadline tracks.
-6. If "${failedOppOrg}" has NO other tracks that fit, return an empty array — do NOT invent tracks.
-7. Apply the TERMINOLOGY guidance above — don't be hyper-literal about stage labels or demographic phrasing.
+
+You have generous tool budget: up to 15 web_fetch calls and multiple web_search queries. USE THEM. A shallow answer based on 1-2 search snippets will miss most of the programs at "${failedOppOrg}".
+
+RESEARCH PATTERN:
+
+STEP 1 — Cast a wide web_search net. Run multiple queries:
+  • "${failedOppOrg} programs ${new Date().getFullYear()}"
+  • "${failedOppOrg} competitions deadlines"
+  • "${failedOppOrg} screenplay lab" (or "film lab" / "grant" — whichever matches the project)
+  • "${failedOppOrg} application" 
+Look for the organization's main programs page, submissions page, or "apply" section.
+
+STEP 2 — Fetch the actual pages on "${failedOppOrg}"'s own domain. Start with their main programs or apply page, then navigate to specific track pages. USE web_fetch to read full page contents, not just snippets.
+
+  Key pages to look for:
+  • The "Programs" or "Labs" index page (lists all competitions/programs)
+  • Individual track pages (one per competition)
+  • Current-cycle application pages
+  • FAQ or "how to apply" pages
+
+  Many festivals and institutes have a dedicated "/programs/" or "/apply/" or "/competitions/" URL path that lists everything. Find it and read it.
+
+STEP 3 — For each track you find, verify on its OWN page:
+  • Does it accept "${project.stage}" stage${sib_scriptStatusLabel ? ` (with script status "${sib_scriptStatusLabel}")` : ""} in "${project.format}" format?
+  • Is the current or upcoming cycle's deadline TODAY OR LATER (${todayReadable})?
+  • Does it match the project's genre and eligibility attributes?
+
+STEP 4 — Return ONLY tracks at "${failedOppOrg}" that pass ALL checks. Exclude:
+  • The original failed track ("${failedOppName}")
+  • Tracks from OTHER organizations (even if relevant)
+  • Past-deadline tracks with no announced future cycle
+  • Tracks where eligibility doesn't match
+
+CRITICAL EXAMPLES OF WHAT TO FIND:
+
+"${failedOppOrg}" often runs MULTIPLE tracks. For example:
+  • Austin Film Festival runs BOTH the Valhalla Entertainment Award (completed films) AND the Screenplay Competition (screenplays) AND Second Rounders (screenplays). These live on DIFFERENT pages.
+  • Sundance Institute runs Screenwriters Lab, Directors Lab, Producers Lab, Episodic Lab, Documentary Film Program, and more. Each has its own page.
+  • Film Independent runs Screenwriting Lab, Documentary Lab, Fiscal Sponsorship, Project Involve, Producers Lab, and the Film Independent Spirit Awards. Each has its own page.
+
+You must find these sibling tracks by navigating the program's own site, not by relying on general knowledge. FETCH the programs index page. FETCH individual track pages.
+
+If "${failedOppOrg}" genuinely has no other tracks that fit, return an empty array. But be thorough first — most major festivals and institutes have multiple tracks, and the right one for this project is likely there if you dig.
+
+Apply the TERMINOLOGY guidance above — don't be hyper-literal about stage labels or demographic phrasing. A "Screenplay Competition" for a Development-stage project with a polished script is a FIT.
 
 ═══════════════════════════════════════════
 OUTPUT FORMAT
