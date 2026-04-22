@@ -439,7 +439,14 @@ async function askClaude(content, search, attempt = 0) {
     messages: messages
   };
   if (search) {
-    body.tools = [{ type: "web_search_20250305", name: "web_search" }];
+    // Both web_search and web_fetch are enabled together. Web_search finds candidate
+    // URLs; web_fetch reads full page contents when the model needs depth beyond
+    // search snippets. Critical for availability verification where the 2026 cycle
+    // info lives on pages deeper than the search snippet landing page.
+    body.tools = [
+      { type: "web_search_20250305", name: "web_search" },
+      { type: "web_fetch_20250910", name: "web_fetch", max_uses: 5 }
+    ];
   }
   let res;
   try {
@@ -449,6 +456,7 @@ async function askClaude(content, search, attempt = 0) {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        "anthropic-beta": "web-fetch-2025-09-10",
         "anthropic-dangerous-direct-browser-access": "true"
       },
       body: JSON.stringify(body)
@@ -1365,7 +1373,7 @@ Be brutally specific to THIS project and THIS team only. No generic advice. Rese
       : filter.toLowerCase();
 
     const stageRules = {
-      "Development": "Return opportunities for projects in the DEVELOPMENT phase (script-focused, not yet in production). This includes: screenwriting grants, script development funds, writers labs, development fellowships, screenplay competitions, early-stage incubators, development residencies, and packaging/financing programs that help move a script toward production. These typically want a COMPLETED or polished screenplay (see the project's Script Status if declared).\n\nSERVICE-FIT EXCLUSIONS — DO NOT return programs whose offered SERVICE cannot be used by a development-stage project:\n• Equipment support / camera packages / lighting grants (these help productions that are actively shooting, not scripts in development — the project has no use for cameras if it isn't shooting)\n• Post-production services (sound mix, color, finishing, VFX finishing) — a development-stage project has nothing to post-produce\n• Distribution grants, festival submission fee waivers, release support — nothing to distribute or release yet\n• Film festivals that require finished films\n• Completed-film awards, jury prizes for finished features\n• Production insurance discount programs, crew training on-set — these require an active shoot\n• Film stock grants, raw stock donations — require filming in progress\nThe test: 'can a film with only a screenplay and no footage meaningfully USE what this program provides?' If no, exclude it.",
+      "Development": "Return opportunities for projects in the DEVELOPMENT phase (script-focused, not yet in production). This includes: screenwriting grants, script development funds, writers labs, development fellowships, screenplay competitions, early-stage incubators, development residencies, and packaging/financing programs that help move a script toward production. These typically want a COMPLETED or polished screenplay (see the project's Script Status if declared).\n\nSERVICE-FIT EXCLUSIONS — DO NOT return programs whose offered SERVICE cannot be used by a development-stage project:\n• Equipment support / camera packages / lighting grants (these help productions that are actively shooting, not scripts in development — the project has no use for cameras if it isn't shooting)\n• Post-production services (sound mix, color, finishing, VFX finishing) — a development-stage project has nothing to post-produce\n• Distribution grants, festival submission fee waivers, release support — nothing to distribute or release yet\n• Film festivals that require finished films\n• Completed-film awards, jury prizes for finished features\n• Production insurance discount programs, crew training on-set — these require an active shoot\n• Film stock grants, raw stock donations — require filming in progress\n• TAX CREDIT programs (state and federal film production tax credits) — these offset production costs for films actively shooting or in post-production. A development-stage project has no production costs to offset and cannot use a tax credit until it has moved into pre-production or production with confirmed shoot dates.\n• Any program requiring principal photography within a specific window (e.g., 'must begin principal photography within 180 days') — a development-stage project is not close to shooting.\nThe test: 'can a film with only a screenplay and no footage meaningfully USE what this program provides?' If no, exclude it.",
       "Pre-Production": "Only return opportunities that accept projects in PRE-PRODUCTION (script is locked, preparing to shoot, crew assembling). This includes: production financing grants, pre-production labs, production fellowships, producer labs, packaging/financing programs, casting labs, and pre-production insurance/legal support.\n\nSERVICE-FIT EXCLUSIONS — DO NOT return:\n• Development-only grants / script labs (the script is already locked, past that phase)\n• Post-production services (no footage yet)\n• Distribution grants, festival submission support (no film to distribute)\n• Completed-film festivals\n• Equipment support that requires an active shoot date that isn't yet set",
       "Production": "Only return opportunities that accept projects currently IN PRODUCTION (actively shooting). This includes: production grants, in-progress financing, equipment and location support for active shoots, labs accepting projects mid-production, and production insurance.\n\nSERVICE-FIT EXCLUSIONS — DO NOT return:\n• Development-only grants or script labs\n• Post-production services (wait until footage exists)\n• Distribution grants\n• Completed-film festivals\n• Pre-production-only labs",
       "Post-Production": "Only return opportunities that accept projects in POST-PRODUCTION (shot but not finished). This includes: finishing funds, post-production grants, work-in-progress showcases, rough-cut labs, WIP festivals, sound/color/VFX finishing grants, and editor/post-production residencies.\n\nSERVICE-FIT EXCLUSIONS — DO NOT return:\n• Development grants, script labs\n• Pre-production or production-only grants (past those phases)\n• Distribution grants requiring a finished, locked cut (unless they accept WIP)\n• Completed-film festivals requiring a final cut (unless they have a WIP section)\n• Equipment support for shoots",
@@ -1787,45 +1795,68 @@ Does this opportunity have a demographic or thematic eligibility requirement (e.
 - Only fail if the opportunity clearly requires an attribute the project explicitly cannot satisfy (e.g., opportunity requires "first-time filmmaker only" and the project team has prior credits visible in the materials).
 
 GATE 4 — AVAILABILITY:
-JavaScript has already done the date arithmetic for you. Do NOT re-check dates or compare months. Your job is narrower: given the JS date check below, determine whether the program is currently active on its own official site.
+JavaScript has already done the date arithmetic for you. Do NOT re-check dates or compare months. Your job is narrower: determine whether the program is currently accepting applications, by doing DEEP multi-page research on the program's own official site.
 
 ${deadlineContextForPrompt}
 
-YOUR TASK:
-Use web search to find the program's OFFICIAL OWN site — not Submittable archives, not aggregators like fundsforngos.org, not third-party blog listings. The program's own domain (filmindependent.org, sundance.org, gothamfilm.org, etc.) is authoritative. Check whether the program is currently accepting applications.
+🚨 MANDATORY MULTI-PAGE RESEARCH — READ THIS BEFORE YOU START:
 
-RULES FOR SOURCE SELECTION:
-- Authoritative: the program's own official domain (.org or company site)
-- Non-authoritative: Submittable archives (submittable.com/...), aggregators (fundsforngos.org, contemporaryperformance.com, us.fundsforngos.org, etc.), third-party blog posts
-- If you can only find the program on a non-authoritative source, return UNCERTAIN with concern text explaining you couldn't verify via the official site
+Programs' websites are layered. A landing page or blog post may show stale 2025 information while the ACTUAL current-cycle info lives one or two clicks deeper — on the application page, the FAQ, or the deadlines page.
+
+Previous failures have come from the AI reading only the first page of search results (often a 2025 blog post or old news article), seeing "2025" prominently, and wrongly concluding "stale." The 2026 info was there — just one page deeper on the program's own site.
+
+TO AVOID THIS FAILURE, YOU MUST:
+
+1. Start with web_search to locate the program's OWN domain (filmindependent.org, sundance.org, gothamfilm.org, etc.)
+
+2. DO NOT STOP at the first search result. Use web_fetch to read the FULL CONTENT of at least TWO of these pages on the program's own domain:
+   - The program's main page (e.g., filmindependent.org/programs/artist-development/screenwriting-lab)
+   - The current application or submission page (look for "apply," "submit," "application," "call for applications")
+   - The FAQ or guidelines page (look for "FAQ," "guidelines," "how to apply")
+   - The deadlines or calendar page (look for "deadlines," "dates," "schedule")
+
+3. The program's MAIN LANDING PAGE is often stale — it may not have been updated for the current cycle. The CURRENT APPLICATION PAGE and FAQ are more reliable sources for current-cycle deadlines.
+
+4. If a search result URL contains "/blog/", "/news/", or "/press/", DO NOT rely on it as your primary source. Those are articles, not current program pages. Use them only as supplementary evidence.
+
+5. If you cannot fetch at least TWO pages on the program's own domain (main + application OR main + FAQ), the verdict MUST be UNCERTAIN. You have not done enough research to FAIL.
+
+SOURCE HIERARCHY:
+- AUTHORITATIVE (trust these): program's own domain, specifically the application page, FAQ page, or deadlines page
+- SECONDARY (supplement only): program's own blog, news, or press pages on their own domain
+- NON-AUTHORITATIVE (never rely on alone): Submittable archives, aggregators (fundsforngos.org, contemporaryperformance.com, us.fundsforngos.org), third-party blog posts
 
 VERDICTS BY JS DATE STATUS:
 
 If JS says FUTURE:
-- PASS when the program's own site confirms the program is active (any active program page, current application info, or doesn't say closed).
-- UNCERTAIN when you can't find the program's own site, OR the site is ambiguous, OR you found the program only on non-authoritative sources.
-- FAIL only when the program's OWN site explicitly says the program is discontinued, shut down, or on permanent hiatus. (This is rare for an opportunity with a future deadline — if the date is future but the program is closed, this is a contradiction worth noting.)
+- PASS when the program's application page OR FAQ confirms the program is active with a deadline that matches or is close to the candidate's claimed deadline.
+- UNCERTAIN when you couldn't fetch the application/FAQ pages, OR the pages are ambiguous.
+- FAIL only when the application/FAQ page explicitly states the program is discontinued or on permanent hiatus.
 
 If JS says PAST:
-- PASS when the program's own site shows a NEW future cycle announced (e.g., "2026 deadline was April 2. The 2027 cycle opens in January 2027."). The new cycle effectively replaces the past one — PASS.
-- UNCERTAIN when you can't clearly determine whether a new cycle exists.
-- FAIL when the program's own site explicitly says no future cycle is planned, or the program is discontinued.
+- PASS when the application page OR FAQ shows a NEW future cycle (e.g., "2027 cycle opens September 2026").
+- UNCERTAIN when you couldn't fetch the application/FAQ pages, OR you can't determine from them whether a new cycle exists.
+- FAIL when the application/FAQ page explicitly states no future cycle is planned, or the program is discontinued. A blog post from 2025 saying "our 2025 cycle" is NOT sufficient — that's a historical article, not a statement about the program's future.
 
 If JS says ROLLING:
-- PASS when the program's own site confirms rolling/continuous intake.
-- UNCERTAIN when the site is ambiguous or you can't find it.
-- FAIL when the site shows an actual annual deadline (i.e., the candidate was wrong about rolling).
+- PASS when the application page or FAQ confirms rolling/continuous intake.
+- UNCERTAIN when you couldn't fetch those pages, or they're ambiguous.
+- FAIL when the application/FAQ page shows an annual deadline (candidate was wrong about rolling).
 
 If JS says UNPARSEABLE:
-- PASS when you find a clear future deadline or rolling intake on the program's own site.
-- UNCERTAIN when you can't find the program's site or the site is ambiguous.
-- FAIL when the program's own site shows the program is definitively closed.
+- PASS when the application page or FAQ shows a clear future deadline or rolling intake.
+- UNCERTAIN when you couldn't fetch those pages (this is the most common case for unparseable — default here).
+- FAIL when the application/FAQ page shows the program is definitively closed.
 
-DEFAULT BIAS: When in doubt, UNCERTAIN. A FAIL verdict tells the user to delete their draft; a false FAIL destroys real work. UNCERTAIN simply asks the user to verify. Require explicit closure/discontinuation language on the official site before FAILing.
+DEFAULT BIAS: A FAIL verdict tells the user to delete their draft; a false FAIL destroys real work. UNCERTAIN simply asks the user to verify. Require explicit closure language on the program's application or FAQ page before FAILing. If you only looked at one page, or only at blog/news pages, UNCERTAIN.
 
-Evidence should quote the exact phrase from the program's site that supports your verdict, with the source URL. For the concern field, state any ambiguity plainly.
+EVIDENCE REQUIREMENTS:
+- Your evidence must quote the EXACT phrase from the application or FAQ page.
+- Your sourceUrl must be the SPECIFIC page where the evidence lives — not the program's homepage, and not a blog post.
+- If you quote from a blog post or news article as your primary evidence, your verdict MUST be UNCERTAIN, not FAIL.
+- The concern field should state which pages you fetched and what you found/couldn't find.
 
-When FAILing, ALWAYS populate the \`failureType\` field with one of: "discontinued" (program has ended), "on-hold" (paused pending funding/restructuring), "past-deadline" (most recent cycle ended with no future cycle). If unsure which, use "past-deadline" as the default. This is critical — it's how the system distinguishes "deadline passed" failures (which may be overridden if JS finds a future deadline) from "genuinely closed" failures (which stand).
+When FAILing, ALWAYS populate the \`failureType\` field with one of: "discontinued" (program has ended), "on-hold" (paused pending funding/restructuring), "past-deadline" (most recent cycle ended with no future cycle). If unsure which, use "past-deadline" as the default.
 
 GATE 5 — SERVICE-STAGE FIT:
 Does the SERVICE this program offers actually help a project at the "${project.stage}" stage? This is NOT about whether the applicant is eligible — that's stage gate. This is about whether the program's OFFERED HELP matches what a project at this stage actually needs.
@@ -1839,6 +1870,8 @@ Examples of service-stage MISMATCH (these should FAIL this gate even if the stag
 - A script development lab awarded to a Completed-stage project. The script is finished and the film is made — the lab's service is past.
 - A publicity/marketing grant for released films, awarded to a film in pre-production. No film to publicize yet.
 - A production insurance grant to a development-stage project with no shoot scheduled.
+- A TAX CREDIT PROGRAM awarded to a Development-stage project. Tax credits offset production costs — if there are no production costs yet (still in script development), the credit has nothing to offset. Even if the program "accepts applications" from development-stage projects, it CANNOT be meaningfully used until the project is actually shooting. Tax credits, production financing (when tied to shoot dates), and any program requiring proof-of-shoot or principal-photography-within-X-days are FAIL for Development-stage projects.
+- Any program requiring principal photography within a specific window (e.g., "shooting must begin within 180 days") awarded to a Development-stage project. The project is nowhere near shooting.
 
 Examples of service-stage FIT (these PASS this gate):
 - A screenwriting fellowship for a Development-stage project with a completed screenplay.
@@ -1931,14 +1964,14 @@ overallVerdict rules:
 
     // SAFETY CHECK: catch model-vs-JS disagreement on availability.
     //
-    // If JS knows the deadline is FUTURE (or rolling) but the model returned
-    // FAIL, we need to decide whether to trust the model or flag disagreement.
+    // Philosophy: a FAIL verdict tells the user to delete their draft. We should
+    // only trust FAIL when the model cites explicit closure (discontinued, on-hold,
+    // hiatus) via its failureType field. If the model returned FAIL for any other
+    // reason — arithmetic error, trusted a stale source, read only a blog post —
+    // downgrade to UNCERTAIN so the user can verify manually.
     //
-    // Inverted logic (safer): we DEFAULT to trusting JS and overriding the model,
-    // UNLESS the model's failureType field explicitly says "discontinued" or
-    // "on-hold". Those are closure reasons that can coexist with a future-looking
-    // deadline listing. "past-deadline" or null failureType with a future JS
-    // status → override to uncertain.
+    // This is deliberately biased toward UNCERTAIN because false FAILs are
+    // destructive (deleted drafts) while false UNCERTAINs just add a review step.
     if (result.availabilityGate && result.availabilityGate.verdict === "fail") {
       const failType = (result.availabilityGate.failureType || "").toLowerCase();
       const isExplicitClosureFail = failType.includes("discontinued") ||
@@ -1946,33 +1979,42 @@ overallVerdict rules:
         failType.includes("hiatus") || failType.includes("paused") ||
         failType.includes("permanently");
 
-      if (deadlineStatus.status === "future" && !isExplicitClosureFail) {
-        // Model said FAIL but didn't cite discontinuation. JS says deadline is future.
-        // Almost certainly a model error or source-selection failure. Override to uncertain.
+      // If the model cited explicit closure, trust it (with a note if JS disagrees on the date).
+      if (isExplicitClosureFail) {
+        if (deadlineStatus.status === "future") {
+          // Model found closure evidence despite future deadline listing. Trust model.
+          const origConcern = result.availabilityGate.concern || "";
+          result.availabilityGate.concern =
+            "Note: JS detected a future deadline (" + deadlineStatus.date.toISOString().slice(0, 10) + "), " +
+            "but AI cited " + failType + " — FAIL stands on the closure evidence. " +
+            "AI reasoning: " + (origConcern || "(none)");
+        }
+        // Otherwise, explicit closure fail — no override needed.
+      } else {
+        // Model did NOT cite explicit closure. This is the "past-deadline" class of fail,
+        // which we've seen be wrong repeatedly (stale sources, bad date math, shallow research).
+        // Downgrade to UNCERTAIN regardless of JS status.
         const origConcern = result.availabilityGate.concern || "";
+        let downgradeReason;
+        if (deadlineStatus.status === "future") {
+          downgradeReason = "JS date check: deadline is " + deadlineStatus.daysUntil + " days in the future (" +
+            deadlineStatus.date.toISOString().slice(0, 10) + "). ";
+        } else if (deadlineStatus.status === "rolling") {
+          downgradeReason = "Candidate claimed rolling intake. ";
+        } else if (deadlineStatus.status === "unparseable") {
+          downgradeReason = "JS could not verify the deadline (unparseable format). ";
+        } else {
+          // past
+          downgradeReason = "JS date check: claimed deadline (" + deadlineStatus.date.toISOString().slice(0, 10) +
+            ") was " + deadlineStatus.daysAgo + " days ago, but a new cycle may exist. ";
+        }
         result.availabilityGate.verdict = "uncertain";
         result.availabilityGate.concern =
-          "⚠ JS date check: deadline is " + deadlineStatus.daysUntil + " days in the future (" +
-          deadlineStatus.date.toISOString().slice(0, 10) +
-          "). AI returned FAIL without citing discontinuation or hiatus. Auto-downgraded to UNCERTAIN. " +
+          "⚠ " + downgradeReason +
+          "AI returned FAIL without citing discontinuation, hiatus, or permanent closure. " +
+          "Auto-downgraded to UNCERTAIN — verify manually via the program's current application page. " +
           "AI's original reasoning: " + (origConcern || "(none)");
-        result._jsOverride = "future-deadline-non-closure-fail";
-      } else if (deadlineStatus.status === "future" && isExplicitClosureFail) {
-        // Model found genuine closure/discontinuation/hiatus evidence. Trust it.
-        // Annotate for transparency so user knows JS saw a future deadline too.
-        const origConcern = result.availabilityGate.concern || "";
-        result.availabilityGate.concern =
-          "Note: JS detected a future deadline (" + deadlineStatus.date.toISOString().slice(0, 10) + "), " +
-          "but AI cited " + failType + " — FAIL stands on the closure evidence. " +
-          "AI reasoning: " + (origConcern || "(none)");
-      } else if (deadlineStatus.status === "rolling" && !isExplicitClosureFail) {
-        // Candidate claimed rolling, model failed without citing closure. Override.
-        const origConcern = result.availabilityGate.concern || "";
-        result.availabilityGate.verdict = "uncertain";
-        result.availabilityGate.concern =
-          "⚠ Candidate claimed rolling intake. AI returned FAIL without citing discontinuation. " +
-          "Downgraded to UNCERTAIN. AI's reasoning: " + (origConcern || "(none)");
-        result._jsOverride = "rolling-non-closure-fail";
+        result._jsOverride = "non-closure-fail-" + deadlineStatus.status;
       }
     }
     // Also attach the JS status to the gate for UI display
