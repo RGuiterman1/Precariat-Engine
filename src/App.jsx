@@ -105,6 +105,27 @@ const PROJECT_CATEGORIES = [
   { key: "micro-budget",     label: "Low / micro-budget",             description: "Sub-$500K or micro-budget production — prioritize programs designed for this budget tier" }
 ];
 
+// Common industry platforms where filmmakers hold accounts. Used as quick-pick
+// suggestions when adding an account to the profile. Users can still add custom
+// platforms not in this list.
+const ACCOUNT_PRESETS = [
+  { name: "The Black List",       url: "https://blcklst.com/" },
+  { name: "Sundance Institute",    url: "https://www.sundance.org/collab/" },
+  { name: "Film Independent",      url: "https://www.filmindependent.org/" },
+  { name: "FilmFreeway",           url: "https://filmfreeway.com/" },
+  { name: "Submittable",           url: "https://manager.submittable.com/" },
+  { name: "Coverfly",              url: "https://writers.coverfly.com/" },
+  { name: "Stage 32",              url: "https://www.stage32.com/" },
+  { name: "IMDb Pro",              url: "https://pro.imdb.com/" },
+  { name: "IFP / The Gotham",      url: "https://thegotham.org/member/" },
+  { name: "NYFA (NY Foundation for the Arts)", url: "https://www.nyfa.org/" },
+  { name: "WGA West",              url: "https://www.wga.org/" },
+  { name: "WGA East",              url: "https://www.wgaeast.org/" },
+  { name: "DGA",                   url: "https://www.dga.org/" },
+  { name: "SAG-AFTRA",             url: "https://www.sagaftra.org/" },
+  { name: "PGA",                   url: "https://www.producersguild.org/" }
+];
+
 // VOICE DIRECTIVE — condensed from Ryan Guiterman's Voice Profile v1.1.
 // Injected into every Generate/Regenerate/Augment prompt when the user
 // has voice mode enabled (default: on). The full Voice Profile lives in
@@ -2593,7 +2614,34 @@ If you CANNOT find the actual field list after diligent searching (and there is 
 
 Additional research items beyond field discovery:
 
-- **External materials the user must provide themselves** (artwork, production stills, trailer/sizzle reel, pitch video, letters of recommendation, W9s, budget spreadsheets, work samples, IMDb links, etc.)
+- **External materials the user must UPLOAD as separate files** (not type into form fields). These are items the submission platform expects as file attachments — e.g., screenplay PDF, WGA registration certificate scan, production stills/artwork as JPG/PNG, trailer/sizzle reel as MP4 or URL, letters of recommendation as PDF, W9 as PDF, budget spreadsheet as XLSX, work samples as video/PDF, IMDb/Vimeo links as URL fields.
+
+  🚨 CRITICAL DISTINCTION — inline vs. upload:
+
+  An item belongs in \`externalMaterials\` ONLY if the submission platform requires it as a FILE ATTACHMENT or EXTERNAL LINK — meaning the user must prepare a separate file (PDF, JPG, MP4, DOCX, XLSX) or provide a URL to external media, then attach/paste-the-URL at submission time.
+
+  An item belongs in \`formFieldsFound\` (NOT externalMaterials) if the submission platform has a TEXT FIELD or TEXTAREA on the application page where the user types content directly — even if the content is long-form. Gotham Week, for example, has inline text fields for logline (25 words), synopsis (60 words), summary (500 words), artistic statement (500 words), goals & audience (500 words), accountability statement (500 words). NONE of those are external materials — they are all form fields even though they are substantial pieces of writing.
+
+  Common items that are usually inline form fields (NOT external materials) on most indie film applications:
+  • Logline / tagline / one-liner — always inline text field
+  • Synopsis (short, medium, long) — always inline text field
+  • Director's / artist's statement — usually inline text field
+  • Project summary / narrative — usually inline text field
+  • Team bio / key personnel description — often inline text field, sometimes upload (varies by platform — research the specific opportunity)
+  • Financing narrative / strategy description — often inline text field, occasionally upload (varies by platform)
+
+  Common items that are usually external materials (require upload or external link):
+  • Screenplay PDF — always upload
+  • WGA registration certificate — always upload (PDF scan)
+  • Production stills / artwork / headshots — always upload (JPG/PNG)
+  • Trailer / sizzle reel / work samples — always URL (Vimeo, YouTube) or upload (MP4)
+  • Letters of recommendation — always upload (PDF)
+  • Detailed budget spreadsheet — usually upload (XLSX or PDF)
+  • W9, tax documents — always upload (PDF)
+  • Prior film's IMDb page — URL field
+
+  When in doubt, check the specific opportunity's submission form. Research whether each requirement has a "type here" text box or an "upload file" / "paste URL" interface. Misclassifying a form field as an external material creates a false "to-do" for the user and confuses their pre-submission review.
+
 - **Account / membership prerequisites** — does this opportunity require the applicant to have an account or active membership with a specific platform? Common examples: Blacklist hosted evaluation, Sundance Institute account, Film Independent membership, FilmFreeway account, Coverfly profile, IMDb Pro listing, WGA registration, Stage 32 membership, Tracking Board, fiscal sponsor affiliation, 501(c)(3) status. Check the applicant's connected accounts list (provided in context) and flag which are met vs. which the applicant needs to create.
 
 Search broadly. Read multiple pages. Do NOT skip this step.
@@ -2935,6 +2983,18 @@ Populate \`formFieldsFound\` with one entry per provided field. For each, set \`
 STEP 1 — RESEARCH (REQUIRED): Use web search to research "${app.oppName}" at "${app.oppOrg}". Find mission, past recipients, aesthetic preferences, tone, and selection criteria.
 
 🔴 STEP 1B — THE FORM FIELD LIST (CRITICAL): You must find the literal list of form fields this application asks for — the exact fields the applicant sees on the submission form. Capture each with its EXACT NAME and EXACT WORD/CHARACTER LIMIT. Search application guidelines, FAQ pages, Submittable/FilmFreeway listings, alumni screenshots, info session recordings. If you cannot find the actual field list, return an empty formFieldsFound array and note this in requirements.summary — do NOT hallucinate a generic template.
+
+🚨 STEP 1C — INLINE vs. UPLOAD CLASSIFICATION (CRITICAL): For each requirement you identify, determine whether the submission platform expects it as:
+
+(a) An inline TEXT FIELD or TEXTAREA on the application page (user types content directly) → goes in \`formFieldsFound\`, even if long-form.
+
+(b) A FILE ATTACHMENT or EXTERNAL LINK the user must prepare separately (PDF, JPG, MP4, DOCX, XLSX, URL) → goes in \`externalMaterials\`.
+
+Common inline text fields (NOT external materials, despite sometimes being long): logline, synopsis, artist statement, director statement, project narrative, summary, goals statement, accountability statement, budget narrative (when typed in a textbox, not uploaded as spreadsheet).
+
+Common external materials (uploaded or URL-linked): screenplay PDF, WGA certificate scan, production stills, headshots, trailer/sizzle reel, work samples (video), letters of recommendation, detailed budget spreadsheet (when uploaded), W9.
+
+When the same item (e.g., team bios) could be inline OR upload depending on the platform, research the SPECIFIC opportunity to determine how it's submitted. Do not default to external material just because it's "supporting content." Misclassifying creates phantom to-dos for the user.
 
 STEP 2 — WRITE: Generate content for EVERY field in formFieldsFound — no exceptions. Count fields, count output pieces, confirm they match. Respect every word limit strictly (count words before finalizing). Preserve the exact field names in customSections titles. Do NOT write generic boilerplate sections the opportunity doesn't ask for.
 
@@ -7881,7 +7941,7 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                 </Bdg>
               </div>
               <p style={{ fontSize: "11px", color: C.tm, fontFamily: FN.m, marginBottom: "14px" }}>
-                Accounts or memberships required before applying. Cross-referenced with your Profile → Connected Accounts.
+                Accounts or memberships required before applying. Cross-referenced with your Profile → Accounts & Memberships.
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 {withStatus.map((acc, i) => (
@@ -7930,7 +7990,7 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                     )}
                     {!acc._met && (
                       <p style={{ fontSize: "11px", color: C.pp, fontFamily: FN.m, marginTop: "4px" }}>
-                        → Once you create this account, add it to Profile → Connected Accounts so the AI can cross-reference it for future applications.
+                        → Once you create this account, add it to Profile → Accounts & Memberships so the AI can cross-reference it for future applications.
                       </p>
                     )}
                   </div>
@@ -9558,6 +9618,7 @@ function ProfView({ profile, save }) {
   const [apiKey, setApiKey] = useState(localStorage.getItem("poe_api_key") || "");
   const [keyVisible, setKeyVisible] = useState(false);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [presetPickerOpen, setPresetPickerOpen] = useState(false);
   const [backupMsg, setBackupMsg] = useState("");
 
   const doSave = () => {
@@ -9817,103 +9878,222 @@ function ProfView({ profile, save }) {
           fontSize: "20px",
           fontStyle: "italic",
           marginBottom: "6px"
-        }}>🔗 Connected Accounts & Memberships</h3>
+        }}>🔗 Accounts & Memberships</h3>
         <p style={{ fontSize: "12px", color: C.tm, marginBottom: "16px", lineHeight: 1.5 }}>
-          Track accounts and memberships you hold on industry platforms (Blacklist, Sundance Institute, Film Independent, IMDb Pro, FilmFreeway, WithoutABox, Coverfly, Stage 32, etc.). When an application requires one of these, the AI will cross-reference this list and tell you if you're already covered or need to sign up.
+          Track accounts and memberships you hold on industry platforms. When an application requires one, the AI cross-references this list and tells you whether you're covered or need to sign up. Click ↗ to open a platform in a new tab, or ✓ to mark an account as recently verified.
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "14px" }}>
-          {(form.connectedAccounts || []).map((acc, i) => (
-            <div key={i} style={{
-              background: C.bg,
-              border: "1px solid " + C.bd,
-              borderRadius: "6px",
-              padding: "12px 14px"
-            }}>
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: "8px",
-                marginBottom: "8px"
+          {(form.connectedAccounts || []).map((acc, i) => {
+            // Compute stale-ness: if verifiedAt is more than 180 days old, show a gentle nudge.
+            let staleBadge = null;
+            if (acc.verifiedAt) {
+              const daysSince = Math.floor((Date.now() - new Date(acc.verifiedAt).getTime()) / 86400000);
+              if (daysSince > 180) {
+                staleBadge = <span style={{ fontSize: "10px", color: C.wn, fontFamily: FN.m, marginLeft: "8px" }}>⚠ {daysSince}d since verified — consider re-verifying</span>;
+              } else {
+                staleBadge = <span style={{ fontSize: "10px", color: C.tm, fontFamily: FN.m, marginLeft: "8px" }}>✓ verified {daysSince === 0 ? "today" : daysSince + "d ago"}</span>;
+              }
+            }
+            return (
+              <div key={i} style={{
+                background: C.bg,
+                border: "1px solid " + C.bd,
+                borderRadius: "6px",
+                padding: "12px 14px"
               }}>
-                <div>
-                  <label style={LS}>Platform / Account Name</label>
-                  <input
-                    value={acc.name || ""}
-                    placeholder="e.g. The Black List, Sundance Institute"
-                    onChange={e => {
-                      const next = [...(form.connectedAccounts || [])];
-                      next[i] = { ...next[i], name: e.target.value };
-                      setForm({ ...form, connectedAccounts: next });
-                    }}
-                  />
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "8px",
+                  marginBottom: "8px"
+                }}>
+                  <div>
+                    <label style={LS}>Platform / Account Name</label>
+                    <input
+                      value={acc.name || ""}
+                      placeholder="e.g. The Black List, Sundance Institute"
+                      onChange={e => {
+                        const next = [...(form.connectedAccounts || [])];
+                        next[i] = { ...next[i], name: e.target.value };
+                        setForm({ ...form, connectedAccounts: next });
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={LS}>Username / Identifier</label>
+                    <input
+                      value={acc.identifier || ""}
+                      placeholder="e.g. ryan_guiterman"
+                      onChange={e => {
+                        const next = [...(form.connectedAccounts || [])];
+                        next[i] = { ...next[i], identifier: e.target.value };
+                        setForm({ ...form, connectedAccounts: next });
+                      }}
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label style={LS}>Username / Identifier</label>
-                  <input
-                    value={acc.identifier || ""}
-                    placeholder="e.g. ryan_guiterman"
-                    onChange={e => {
-                      const next = [...(form.connectedAccounts || [])];
-                      next[i] = { ...next[i], identifier: e.target.value };
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "8px",
+                  marginBottom: "10px"
+                }}>
+                  <div>
+                    <label style={LS}>URL (optional)</label>
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      <input
+                        style={{ flex: 1 }}
+                        value={acc.url || ""}
+                        placeholder="https://..."
+                        onChange={e => {
+                          const next = [...(form.connectedAccounts || [])];
+                          next[i] = { ...next[i], url: e.target.value };
+                          setForm({ ...form, connectedAccounts: next });
+                        }}
+                      />
+                      {acc.url && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const url = (acc.url || "").trim();
+                            if (!url) return;
+                            const fullUrl = url.startsWith("http") ? url : "https://" + url;
+                            window.open(fullUrl, "_blank", "noopener,noreferrer");
+                          }}
+                          style={{
+                            padding: "0 12px",
+                            background: "transparent",
+                            border: "1px solid " + C.tl,
+                            color: C.tl,
+                            borderRadius: "4px",
+                            fontFamily: FN.m,
+                            fontSize: "12px",
+                            cursor: "pointer",
+                            whiteSpace: "nowrap"
+                          }}
+                          title="Open in new tab"
+                        >↗ Open</button>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <label style={LS}>Notes (tier, status, etc.)</label>
+                    <input
+                      value={acc.notes || ""}
+                      placeholder="e.g. 7.5 evaluation, Top List"
+                      onChange={e => {
+                        const next = [...(form.connectedAccounts || [])];
+                        next[i] = { ...next[i], notes: e.target.value };
+                        setForm({ ...form, connectedAccounts: next });
+                      }}
+                    />
+                  </div>
+                </div>
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "8px",
+                  flexWrap: "wrap"
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+                    <Btn
+                      variant="ghost"
+                      small
+                      onClick={() => {
+                        const next = [...(form.connectedAccounts || [])];
+                        next[i] = { ...next[i], verifiedAt: new Date().toISOString() };
+                        setForm({ ...form, connectedAccounts: next });
+                      }}
+                      style={{ color: C.ok }}
+                    >✓ Mark verified today</Btn>
+                    {staleBadge}
+                  </div>
+                  <Btn
+                    variant="ghost"
+                    small
+                    onClick={() => {
+                      const next = (form.connectedAccounts || []).filter((_, j) => j !== i);
                       setForm({ ...form, connectedAccounts: next });
                     }}
-                  />
+                    style={{ color: C.dn }}
+                  >✗ Remove</Btn>
                 </div>
               </div>
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr auto",
-                gap: "8px",
-                alignItems: "end"
-              }}>
-                <div>
-                  <label style={LS}>URL (optional)</label>
-                  <input
-                    value={acc.url || ""}
-                    placeholder="https://..."
-                    onChange={e => {
-                      const next = [...(form.connectedAccounts || [])];
-                      next[i] = { ...next[i], url: e.target.value };
-                      setForm({ ...form, connectedAccounts: next });
-                    }}
-                  />
-                </div>
-                <div>
-                  <label style={LS}>Notes (tier, status, etc.)</label>
-                  <input
-                    value={acc.notes || ""}
-                    placeholder="e.g. 7.5 evaluation, Top List"
-                    onChange={e => {
-                      const next = [...(form.connectedAccounts || [])];
-                      next[i] = { ...next[i], notes: e.target.value };
-                      setForm({ ...form, connectedAccounts: next });
-                    }}
-                  />
-                </div>
-                <Btn
-                  variant="ghost"
-                  small
-                  onClick={() => {
-                    const next = (form.connectedAccounts || []).filter((_, j) => j !== i);
-                    setForm({ ...form, connectedAccounts: next });
-                  }}
-                  style={{ color: C.dn }}
-                >✗ Remove</Btn>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
-        <Btn
-          variant="secondary"
-          onClick={() => {
-            const next = [...(form.connectedAccounts || []), { name: "", identifier: "", url: "", notes: "" }];
-            setForm({ ...form, connectedAccounts: next });
-          }}
-        >+ Add Account</Btn>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <Btn
+            variant="secondary"
+            onClick={() => setPresetPickerOpen(true)}
+          >+ Add from preset</Btn>
+          <Btn
+            variant="ghost"
+            onClick={() => {
+              const next = [...(form.connectedAccounts || []), { name: "", identifier: "", url: "", notes: "" }];
+              setForm({ ...form, connectedAccounts: next });
+            }}
+          >+ Add custom</Btn>
+        </div>
         <p style={{ fontSize: "11px", color: C.tm, marginTop: "10px" }}>
           Don't forget to click "Save All" at the top after editing.
         </p>
       </Card>
+
+      {/* PRESET PICKER MODAL — quick-add from common industry platforms */}
+      <Mdl open={presetPickerOpen} onClose={() => setPresetPickerOpen(false)}>
+        <h3 style={{ fontFamily: FN.d, fontSize: "20px", fontStyle: "italic", marginBottom: "10px" }}>
+          Quick-add a platform
+        </h3>
+        <p style={{ fontSize: "12px", color: C.tm, marginBottom: "16px", lineHeight: 1.5 }}>
+          Pick an industry platform to add to your accounts. Name and URL will be pre-filled. You can edit the identifier and notes after.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", maxHeight: "400px", overflowY: "auto" }}>
+          {ACCOUNT_PRESETS.map((preset, idx) => {
+            const alreadyAdded = (form.connectedAccounts || []).some(a => (a.name || "").toLowerCase() === preset.name.toLowerCase());
+            return (
+              <button
+                key={idx}
+                type="button"
+                disabled={alreadyAdded}
+                onClick={() => {
+                  if (alreadyAdded) return;
+                  const next = [...(form.connectedAccounts || []), {
+                    name: preset.name,
+                    url: preset.url,
+                    identifier: "",
+                    notes: "",
+                    verifiedAt: ""
+                  }];
+                  setForm({ ...form, connectedAccounts: next });
+                  setPresetPickerOpen(false);
+                }}
+                style={{
+                  textAlign: "left",
+                  padding: "10px 12px",
+                  background: alreadyAdded ? C.bg : "transparent",
+                  border: "1px solid " + (alreadyAdded ? C.bd : C.pp + "60"),
+                  borderRadius: "6px",
+                  color: alreadyAdded ? C.td : C.tx,
+                  cursor: alreadyAdded ? "not-allowed" : "pointer",
+                  opacity: alreadyAdded ? 0.5 : 1,
+                  transition: "all 0.15s"
+                }}
+                title={alreadyAdded ? "Already in your accounts list" : preset.url}
+              >
+                <p style={{ fontSize: "13px", fontWeight: 600, marginBottom: "2px" }}>{preset.name}</p>
+                <p style={{ fontSize: "10px", color: C.tm, fontFamily: FN.m, wordBreak: "break-all" }}>
+                  {alreadyAdded ? "✓ already added" : preset.url}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: "14px", display: "flex", justifyContent: "flex-end" }}>
+          <Btn variant="ghost" onClick={() => setPresetPickerOpen(false)}>Close</Btn>
+        </div>
+      </Mdl>
 
       <Card style={{ marginTop: "20px", borderColor: C.tl + "40" }}>
         <h3 style={{
