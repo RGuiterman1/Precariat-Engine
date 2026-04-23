@@ -2590,57 +2590,60 @@ Before writing a single word of the application, you MUST use web search to rese
 6. Selection criteria — what do judges/committees explicitly score on?
 7. Any red flags or common reasons applications fail
 
-🔴🔴🔴 STEP 1B — THE FORM FIELD LIST (MOST CRITICAL PART OF STEP 1) 🔴🔴🔴
+🔴🔴🔴 STEP 1B — FETCH THE ACTUAL SUBMISSION FORM (MOST CRITICAL PART OF STEP 1) 🔴🔴🔴
 
-You MUST find the actual list of form fields this application asks for. Not a summary. Not a vibe. The literal list of fields the applicant will see when they open the submission form.
+Your job is NOT to read about the submission form in guidelines prose. Your job is to LOAD THE ACTUAL FORM PAGE and observe its field elements directly.
 
-Find it by searching for:
-- "[Opportunity name] application guidelines"
-- "[Opportunity name] FAQ"
-- "[Opportunity name] how to apply"
-- "[Opportunity name] submission requirements"
-- Links to the application form itself (Submittable, FilmFreeway, Gotham's own portal, etc.)
-- Past-year applications screenshots or guidebooks shared by alumni
-- Info session recordings or transcripts
+MANDATORY RESEARCH SEQUENCE:
 
-Every field you find must be captured with its EXACT NAME AS THE FORM USES IT and the EXACT WORD/CHARACTER LIMIT. If the form calls it "Artistic Statement" do NOT rename it to "Artist Statement." If the limit is "500 words" use "500 words," not "about half a page."
+Step 1B-i: START BY FETCHING THE OPPORTUNITY URL using web_fetch. The opportunity URL is: ${o.url || "(none provided — search for it)"}
 
-If you CANNOT find the actual field list after diligent searching (and there is no manual override above):
-- Do NOT hallucinate one. Do NOT fall back to a generic template.
-- Return an empty \`formFieldsFound\` array and explicitly note this in the \`requirements.summary\` field: "Field list could not be confirmed through public research. This draft uses a generic template; the user must verify the actual form requirements before submitting."
-- Still flag any external materials and account prerequisites you can identify.
+Step 1B-ii: If that page is a marketing page or overview, find and follow links to the actual application form. The application form is usually one click deeper — look for links labeled "Apply," "Submit," "Application," "Open Call," "Submit via Submittable," "Submit via FilmFreeway," etc. FETCH that deeper URL with web_fetch.
 
-🔴 COMMON FAILURE MODE TO AVOID: Some applications (Gotham Week, Sundance labs, many fellowships) have detailed field lists that live INSIDE a login-gated Submittable or custom portal. The marketing page only shows vague descriptions. If you land on a marketing page that says "submit your project" without field details, KEEP SEARCHING — look for guidelines PDFs, FAQ pages, alumni posts, third-party coverage. Do not settle for the marketing page.
+Step 1B-iii: When you have the actual application form page, READ ITS CONTENT to identify every form element visible on that page. You're looking for:
+- Text input fields (short — like "Logline (25 words)")
+- Textarea fields (long-form — like "Artistic Statement (500 words)")
+- File upload fields (like "Upload screenplay (PDF)")
+- URL/link fields (like "Link to sizzle reel" or "Vimeo URL")
+- Dropdown/select fields (like genre selection)
+- Date fields
+- Checkbox fields
 
-Additional research items beyond field discovery:
+For each element, capture:
+- The EXACT field name as shown on the form
+- The EXACT word/character limit if stated
+- Whether it's an inline text field, textarea, file upload, URL field, dropdown, date, or checkbox
+- Any special instructions (e.g., "password-protected Vimeo link accepted")
 
-- **External materials the user must UPLOAD as separate files** (not type into form fields). These are items the submission platform expects as file attachments — e.g., screenplay PDF, WGA registration certificate scan, production stills/artwork as JPG/PNG, trailer/sizzle reel as MP4 or URL, letters of recommendation as PDF, W9 as PDF, budget spreadsheet as XLSX, work samples as video/PDF, IMDb/Vimeo links as URL fields.
+Step 1B-iv: If the submission form is login-gated (common for Submittable, FilmFreeway, custom portals), fetch the guidelines PDF, FAQ page, alumni posts, info session transcripts — WHATEVER describes the actual fields. But ONLY if the form itself cannot be reached. Your first choice is always the live form.
 
-  🚨 CRITICAL DISTINCTION — inline vs. upload:
+Step 1B-v: Return every field you identified in \`formFieldsFound\` (for inline text fields and textareas) or in \`externalMaterials\` (for file uploads, URL fields, password-protected media links). DO NOT OMIT fields because they're hard to categorize. If you found a field on the form, report it. The user needs to see what's actually on the submission page.
 
-  An item belongs in \`externalMaterials\` ONLY if the submission platform requires it as a FILE ATTACHMENT or EXTERNAL LINK — meaning the user must prepare a separate file (PDF, JPG, MP4, DOCX, XLSX) or provide a URL to external media, then attach/paste-the-URL at submission time.
+🚨 If you cannot reach the submission form after fetching multiple pages on the opportunity's domain, return an empty \`formFieldsFound\` array and explicitly note in \`requirements.summary\`: "Could not access the actual submission form. Listed requirements are based on guidelines-page descriptions only. User must verify against the live form before submitting."
 
-  An item belongs in \`formFieldsFound\` (NOT externalMaterials) if the submission platform has a TEXT FIELD or TEXTAREA on the application page where the user types content directly — even if the content is long-form. Gotham Week, for example, has inline text fields for logline (25 words), synopsis (60 words), summary (500 words), artistic statement (500 words), goals & audience (500 words), accountability statement (500 words). NONE of those are external materials — they are all form fields even though they are substantial pieces of writing.
+🚨 DO NOT hallucinate generic fields. DO NOT list fields that appear on similar-but-different opportunities. Only list fields you can attribute to THIS specific opportunity's submission form.
 
-  Common items that are usually inline form fields (NOT external materials) on most indie film applications:
-  • Logline / tagline / one-liner — always inline text field
-  • Synopsis (short, medium, long) — always inline text field
-  • Director's / artist's statement — usually inline text field
-  • Project summary / narrative — usually inline text field
-  • Team bio / key personnel description — often inline text field, sometimes upload (varies by platform — research the specific opportunity)
-  • Financing narrative / strategy description — often inline text field, occasionally upload (varies by platform)
+CLASSIFICATION — where each identified field goes:
 
-  Common items that are usually external materials (require upload or external link):
-  • Screenplay PDF — always upload
-  • WGA registration certificate — always upload (PDF scan)
-  • Production stills / artwork / headshots — always upload (JPG/PNG)
-  • Trailer / sizzle reel / work samples — always URL (Vimeo, YouTube) or upload (MP4)
-  • Letters of recommendation — always upload (PDF)
-  • Detailed budget spreadsheet — usually upload (XLSX or PDF)
-  • W9, tax documents — always upload (PDF)
-  • Prior film's IMDb page — URL field
+\`formFieldsFound\` (inline text fields and textareas — user types content directly):
+- Logline, tagline, one-liner (short text)
+- Synopsis, summary, narrative (short or long textareas)
+- Director's / artist's / accountability statement (textarea, often 500 words)
+- Goals & audience, project statement, impact statement (textarea)
+- Team member / producer inline bio (if the form has a textarea for it, not an upload)
+- Budget narrative (if typed into the form, not uploaded as spreadsheet)
 
-  When in doubt, check the specific opportunity's submission form. Research whether each requirement has a "type here" text box or an "upload file" / "paste URL" interface. Misclassifying a form field as an external material creates a false "to-do" for the user and confuses their pre-submission review.
+\`externalMaterials\` (file uploads, URL/link fields, password-protected media):
+- Screenplay PDF (fileUpload)
+- WGA registration certificate (fileUpload)
+- Production stills, artwork, headshots (fileUpload)
+- Budget spreadsheet if uploaded as separate file (fileUpload)
+- Trailer / sizzle reel / work samples as URL (urlField or urlWithPassword)
+- IMDb, Vimeo, YouTube links (urlField)
+- Letters of recommendation (fileUpload)
+- W9, tax documents (fileUpload)
+
+Each \`externalMaterials\` entry must include an \`inputType\` field — one of: "fileUpload", "urlField", "urlWithPassword". This drives how the UI renders the to-do.
 
 - **Account / membership prerequisites** — does this opportunity require the applicant to have an account or active membership with a specific platform? Common examples: Blacklist hosted evaluation, Sundance Institute account, Film Independent membership, FilmFreeway account, Coverfly profile, IMDb Pro listing, WGA registration, Stage 32 membership, Tracking Board, fiscal sponsor affiliation, 501(c)(3) status. Check the applicant's connected accounts list (provided in context) and flag which are met vs. which the applicant needs to create.
 
@@ -2735,8 +2738,9 @@ The structure below makes \`formFieldsFound\` + \`customSections\` the PRIMARY o
   "externalMaterials": [
     {
       "name": "Human-readable name, e.g. 'Key artwork / production still'",
-      "requirement": "What the opportunity actually requires, e.g. '300dpi, 16:9 aspect ratio, JPG or PNG'",
+      "requirement": "What the opportunity actually requires, e.g. '300dpi, 16:9 aspect ratio, JPG or PNG' or 'Vimeo link, password-protected acceptable'",
       "note": "Brief note on what the user needs to do — these cannot be auto-generated. E.g., 'Upload your best production still or artwork. Contact your production designer for high-res files.'",
+      "inputType": "fileUpload | urlField | urlWithPassword — how the submission platform accepts this item. 'fileUpload' for actual file attachments (PDF/JPG/MP4/DOCX/XLSX). 'urlField' for plain URL pasting (Vimeo, YouTube, IMDb). 'urlWithPassword' for media URLs that need a password field alongside them (common for sizzle reels and unreleased work samples on Vimeo).",
       "critical": true
     }
   ],
@@ -2982,19 +2986,16 @@ Populate \`formFieldsFound\` with one entry per provided field. For each, set \`
 
 STEP 1 — RESEARCH (REQUIRED): Use web search to research "${app.oppName}" at "${app.oppOrg}". Find mission, past recipients, aesthetic preferences, tone, and selection criteria.
 
-🔴 STEP 1B — THE FORM FIELD LIST (CRITICAL): You must find the literal list of form fields this application asks for — the exact fields the applicant sees on the submission form. Capture each with its EXACT NAME and EXACT WORD/CHARACTER LIMIT. Search application guidelines, FAQ pages, Submittable/FilmFreeway listings, alumni screenshots, info session recordings. If you cannot find the actual field list, return an empty formFieldsFound array and note this in requirements.summary — do NOT hallucinate a generic template.
+🔴 STEP 1B — FETCH THE ACTUAL SUBMISSION FORM (CRITICAL): Your job is NOT to read guideline prose. Your job is to LOAD the actual submission form page and observe its field elements directly.
 
-🚨 STEP 1C — INLINE vs. UPLOAD CLASSIFICATION (CRITICAL): For each requirement you identify, determine whether the submission platform expects it as:
+MANDATORY SEQUENCE:
+1. Start by using web_fetch on the opportunity URL: ${app.oppUrl || "(search for it)"}
+2. If that's a marketing/overview page, follow links to the actual application form (look for "Apply," "Submit," "Open Call," Submittable/FilmFreeway links). Fetch the deeper URL with web_fetch.
+3. On the application form page, read every visible form element. For each, note: the EXACT field name, the EXACT word/character limit, and the ELEMENT TYPE (text, textarea, fileUpload, urlField, urlWithPassword, dropdown, date, checkbox).
+4. If the form is login-gated, fetch guidelines PDFs or FAQ pages that describe the form — but only as fallback. Live form is always first choice.
+5. Return every field you found. Inline text/textareas go in \`formFieldsFound\`. File uploads, URL fields, and password-protected media links go in \`externalMaterials\` with an \`inputType\` field of "fileUpload", "urlField", or "urlWithPassword".
 
-(a) An inline TEXT FIELD or TEXTAREA on the application page (user types content directly) → goes in \`formFieldsFound\`, even if long-form.
-
-(b) A FILE ATTACHMENT or EXTERNAL LINK the user must prepare separately (PDF, JPG, MP4, DOCX, XLSX, URL) → goes in \`externalMaterials\`.
-
-Common inline text fields (NOT external materials, despite sometimes being long): logline, synopsis, artist statement, director statement, project narrative, summary, goals statement, accountability statement, budget narrative (when typed in a textbox, not uploaded as spreadsheet).
-
-Common external materials (uploaded or URL-linked): screenplay PDF, WGA certificate scan, production stills, headshots, trailer/sizzle reel, work samples (video), letters of recommendation, detailed budget spreadsheet (when uploaded), W9.
-
-When the same item (e.g., team bios) could be inline OR upload depending on the platform, research the SPECIFIC opportunity to determine how it's submitted. Do not default to external material just because it's "supporting content." Misclassifying creates phantom to-dos for the user.
+🚨 DO NOT hallucinate generic fields. If you cannot reach the submission form, return empty \`formFieldsFound\` and note in requirements.summary: "Could not access the actual submission form. User must verify against the live form before submitting."
 
 STEP 2 — WRITE: Generate content for EVERY field in formFieldsFound — no exceptions. Count fields, count output pieces, confirm they match. Respect every word limit strictly (count words before finalizing). Preserve the exact field names in customSections titles. Do NOT write generic boilerplate sections the opportunity doesn't ask for.
 
@@ -3033,7 +3034,7 @@ Respond ONLY with JSON (no markdown):
     { "key": "camelCaseKey", "title": "EXACT field name from form", "wordLimit": "...", "content": "..." }
   ],
   "externalMaterials": [
-    { "name": "...", "requirement": "...", "note": "...", "critical": true }
+    { "name": "...", "requirement": "...", "note": "...", "inputType": "fileUpload | urlField | urlWithPassword", "critical": true }
   ],
   "accountsRequired": [
     { "name": "Platform name", "reason": "Why needed", "url": "direct link", "alreadyMet": false, "matchedAccount": "" }
@@ -8131,6 +8132,12 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                               {mat.name}
                             </p>
                             {mat.critical && <Bdg color={C.dn}>REQUIRED</Bdg>}
+                            {(() => {
+                              const t = mat.inputType || "fileUpload";
+                              if (t === "urlField") return <Bdg color={C.tl}>🔗 URL</Bdg>;
+                              if (t === "urlWithPassword") return <Bdg color={C.tl}>🔗 URL + password</Bdg>;
+                              return <Bdg color={C.pp}>📎 Upload</Bdg>;
+                            })()}
                             {mat.status === "requested" && <Bdg color={C.ac}>REQUESTED</Bdg>}
                             {isOverdue && <Bdg color={C.dn}>OVERDUE</Bdg>}
                           </div>
@@ -8178,74 +8185,234 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
                             />
                           </div>
                           <div style={{ marginTop: "10px" }}>
-                            {mat.uploadedFile ? (
-                              <div style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "10px",
-                                padding: "8px 12px",
-                                background: C.ok + "10",
-                                border: "1px solid " + C.ok + "40",
-                                borderRadius: "6px"
-                              }}>
-                                <span style={{ fontSize: "16px" }}>📎</span>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <p style={{
-                                    fontSize: "12px",
-                                    color: C.tx,
-                                    fontWeight: 600,
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    whiteSpace: "nowrap"
-                                  }}>{mat.uploadedFile.name}</p>
-                                  <p style={{ fontSize: "10px", color: C.tm, fontFamily: FN.m }}>
-                                    {(mat.uploadedFile.size / 1024).toFixed(0)} KB · uploaded {new Date(mat.uploadedFile.uploadedAt).toLocaleDateString()}
-                                  </p>
+                            {/* Branch based on inputType. Legacy items without inputType default to fileUpload. */}
+                            {(() => {
+                              const inputType = mat.inputType || "fileUpload";
+
+                              // URL FIELD — user pastes a link (Vimeo, YouTube, IMDb, etc.)
+                              if (inputType === "urlField") {
+                                return (
+                                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                                    <div style={{ display: "flex", gap: "6px" }}>
+                                      <input
+                                        type="text"
+                                        placeholder="Paste URL here (e.g. Vimeo, YouTube, IMDb link)"
+                                        value={mat.submittedUrl || ""}
+                                        onChange={e => {
+                                          const val = e.target.value;
+                                          const patch = { submittedUrl: val };
+                                          // Auto-mark as received when URL becomes non-empty; revert to pending when cleared
+                                          if (val.trim() && mat.status !== "received" && mat.status !== "na") {
+                                            patch.status = "received";
+                                          } else if (!val.trim() && mat.status === "received" && !mat.uploadedFile) {
+                                            patch.status = "pending";
+                                          }
+                                          updateMaterial(i, patch);
+                                        }}
+                                        style={{ flex: 1, fontSize: "12px", padding: "8px 10px" }}
+                                      />
+                                      {mat.submittedUrl && (
+                                        <>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const url = (mat.submittedUrl || "").trim();
+                                              if (!url) return;
+                                              navigator.clipboard.writeText(url);
+                                            }}
+                                            style={{
+                                              padding: "0 10px",
+                                              background: "transparent",
+                                              border: "1px solid " + C.ac,
+                                              color: C.ac,
+                                              borderRadius: "4px",
+                                              fontFamily: FN.m,
+                                              fontSize: "11px",
+                                              cursor: "pointer",
+                                              whiteSpace: "nowrap"
+                                            }}
+                                            title="Copy URL to clipboard"
+                                          >⎘ Copy</button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const url = (mat.submittedUrl || "").trim();
+                                              if (!url) return;
+                                              const fullUrl = url.startsWith("http") ? url : "https://" + url;
+                                              window.open(fullUrl, "_blank", "noopener,noreferrer");
+                                            }}
+                                            style={{
+                                              padding: "0 10px",
+                                              background: "transparent",
+                                              border: "1px solid " + C.tl,
+                                              color: C.tl,
+                                              borderRadius: "4px",
+                                              fontFamily: FN.m,
+                                              fontSize: "11px",
+                                              cursor: "pointer",
+                                              whiteSpace: "nowrap"
+                                            }}
+                                            title="Open in new tab"
+                                          >↗ Open</button>
+                                        </>
+                                      )}
+                                    </div>
+                                    <p style={{ fontSize: "10px", color: C.tm, fontFamily: FN.m }}>
+                                      URL field — paste the link in the application form's URL input
+                                    </p>
+                                  </div>
+                                );
+                              }
+
+                              // URL WITH PASSWORD — media URL + access password (common for unreleased sizzle reels on Vimeo)
+                              if (inputType === "urlWithPassword") {
+                                return (
+                                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                                    <div style={{ display: "flex", gap: "6px" }}>
+                                      <input
+                                        type="text"
+                                        placeholder="Media URL (Vimeo / YouTube)"
+                                        value={mat.submittedUrl || ""}
+                                        onChange={e => {
+                                          const val = e.target.value;
+                                          const patch = { submittedUrl: val };
+                                          if (val.trim() && mat.status !== "received" && mat.status !== "na") {
+                                            patch.status = "received";
+                                          } else if (!val.trim() && mat.status === "received" && !mat.uploadedFile) {
+                                            patch.status = "pending";
+                                          }
+                                          updateMaterial(i, patch);
+                                        }}
+                                        style={{ flex: 1, fontSize: "12px", padding: "8px 10px" }}
+                                      />
+                                      {mat.submittedUrl && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const url = (mat.submittedUrl || "").trim();
+                                            if (!url) return;
+                                            const fullUrl = url.startsWith("http") ? url : "https://" + url;
+                                            window.open(fullUrl, "_blank", "noopener,noreferrer");
+                                          }}
+                                          style={{
+                                            padding: "0 10px",
+                                            background: "transparent",
+                                            border: "1px solid " + C.tl,
+                                            color: C.tl,
+                                            borderRadius: "4px",
+                                            fontFamily: FN.m,
+                                            fontSize: "11px",
+                                            cursor: "pointer"
+                                          }}
+                                          title="Open in new tab"
+                                        >↗</button>
+                                      )}
+                                    </div>
+                                    <div style={{ display: "flex", gap: "6px" }}>
+                                      <input
+                                        type="text"
+                                        placeholder="Access password (for password-protected video)"
+                                        value={mat.submittedPassword || ""}
+                                        onChange={e => updateMaterial(i, { submittedPassword: e.target.value })}
+                                        style={{ flex: 1, fontSize: "12px", padding: "8px 10px" }}
+                                      />
+                                      {mat.submittedPassword && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(mat.submittedPassword || "");
+                                          }}
+                                          style={{
+                                            padding: "0 10px",
+                                            background: "transparent",
+                                            border: "1px solid " + C.ac,
+                                            color: C.ac,
+                                            borderRadius: "4px",
+                                            fontFamily: FN.m,
+                                            fontSize: "11px",
+                                            cursor: "pointer"
+                                          }}
+                                          title="Copy password to clipboard"
+                                        >⎘</button>
+                                      )}
+                                    </div>
+                                    <p style={{ fontSize: "10px", color: C.tm, fontFamily: FN.m }}>
+                                      URL + password — paste URL in the link field and password in the adjacent password field
+                                    </p>
+                                  </div>
+                                );
+                              }
+
+                              // FILE UPLOAD — default for legacy items and explicit fileUpload items
+                              return mat.uploadedFile ? (
+                                <div style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "10px",
+                                  padding: "8px 12px",
+                                  background: C.ok + "10",
+                                  border: "1px solid " + C.ok + "40",
+                                  borderRadius: "6px"
+                                }}>
+                                  <span style={{ fontSize: "16px" }}>📎</span>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <p style={{
+                                      fontSize: "12px",
+                                      color: C.tx,
+                                      fontWeight: 600,
+                                      overflow: "hidden",
+                                      textOverflow: "ellipsis",
+                                      whiteSpace: "nowrap"
+                                    }}>{mat.uploadedFile.name}</p>
+                                    <p style={{ fontSize: "10px", color: C.tm, fontFamily: FN.m }}>
+                                      {(mat.uploadedFile.size / 1024).toFixed(0)} KB · uploaded {new Date(mat.uploadedFile.uploadedAt).toLocaleDateString()}
+                                    </p>
+                                  </div>
+                                  <Btn
+                                    variant="ghost"
+                                    small
+                                    onClick={() => downloadMaterialFile(mat)}
+                                    style={{ color: C.ac }}
+                                  >⬇ Download</Btn>
+                                  <Btn
+                                    variant="ghost"
+                                    small
+                                    onClick={() => {
+                                      if (confirm("Remove this uploaded file?")) {
+                                        updateMaterial(i, { uploadedFile: null });
+                                      }
+                                    }}
+                                    style={{ color: C.dn }}
+                                  >✗</Btn>
                                 </div>
-                                <Btn
-                                  variant="ghost"
-                                  small
-                                  onClick={() => downloadMaterialFile(mat)}
-                                  style={{ color: C.ac }}
-                                >⬇ Download</Btn>
-                                <Btn
-                                  variant="ghost"
-                                  small
-                                  onClick={() => {
-                                    if (confirm("Remove this uploaded file?")) {
-                                      updateMaterial(i, { uploadedFile: null });
-                                    }
-                                  }}
-                                  style={{ color: C.dn }}
-                                >✗</Btn>
-                              </div>
-                            ) : (
-                              <label style={{
-                                display: "inline-block",
-                                cursor: "pointer"
-                              }}>
-                                <span style={{
+                              ) : (
+                                <label style={{
                                   display: "inline-block",
-                                  padding: "8px 14px",
-                                  background: "transparent",
-                                  border: "1px dashed " + C.bd,
-                                  borderRadius: "6px",
-                                  color: C.tm,
-                                  fontSize: "11px",
-                                  fontFamily: FN.m,
                                   cursor: "pointer"
-                                }}>📎 Upload file (max 10MB)</span>
-                                <input
-                                  type="file"
-                                  style={{ display: "none" }}
-                                  onChange={e => {
-                                    const file = e.target.files && e.target.files[0];
-                                    if (file) uploadMaterialFile(i, file);
-                                    e.target.value = "";
-                                  }}
-                                />
-                              </label>
-                            )}
+                                }}>
+                                  <span style={{
+                                    display: "inline-block",
+                                    padding: "8px 14px",
+                                    background: "transparent",
+                                    border: "1px dashed " + C.bd,
+                                    borderRadius: "6px",
+                                    color: C.tm,
+                                    fontSize: "11px",
+                                    fontFamily: FN.m,
+                                    cursor: "pointer"
+                                  }}>📎 Upload file (max 10MB)</span>
+                                  <input
+                                    type="file"
+                                    style={{ display: "none" }}
+                                    onChange={e => {
+                                      const file = e.target.files && e.target.files[0];
+                                      if (file) uploadMaterialFile(i, file);
+                                      e.target.value = "";
+                                    }}
+                                  />
+                                </label>
+                              );
+                            })()}
                           </div>
                         </div>
                       </div>
