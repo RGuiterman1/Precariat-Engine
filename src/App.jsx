@@ -8424,17 +8424,113 @@ Respond with ONLY the rewritten text. No preamble, no explanation, no quotes aro
           );
         })()}
 
-        {sections.length === 0 && (
-          <Card style={{
-            marginBottom: "12px",
-            borderColor: C.tm + "30",
-            background: C.bg
-          }}>
-            <p style={{ fontSize: "13px", color: C.tm, textAlign: "center", padding: "20px" }}>
-              No written sections were required for this application. Check the External Materials above for what you need to provide.
-            </p>
-          </Card>
-        )}
+        {sections.length === 0 && (() => {
+          // Detect whether the engine failed to reach the actual submission form.
+          // Signals: empty formFieldsFound AND a requirements.summary that flags it.
+          const reqSum = (c.requirements && c.requirements.summary) || "";
+          const looksLikeDiscoveryFailure =
+            reqSum.toLowerCase().includes("could not") ||
+            reqSum.toLowerCase().includes("couldn't") ||
+            reqSum.toLowerCase().includes("unsuccessful") ||
+            reqSum.toLowerCase().includes("not be confirmed") ||
+            reqSum.toLowerCase().includes("not be located") ||
+            reqSum.toLowerCase().includes("generic template") ||
+            !(c.formFieldsFound && c.formFieldsFound.length > 0);
+
+          if (looksLikeDiscoveryFailure) {
+            // The common cause is a login-gated form (Submittable, FilmFreeway, custom portals).
+            // Surface what happened plainly and give a one-click path to fix it.
+            return (
+              <Card style={{
+                marginBottom: "12px",
+                borderColor: C.wn + "60",
+                background: C.wn + "0a"
+              }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
+                  <span style={{ fontSize: "22px" }}>⚠</span>
+                  <div style={{ flex: 1 }}>
+                    <h3 style={{
+                      fontFamily: FN.d,
+                      fontSize: "18px",
+                      fontStyle: "italic",
+                      color: C.wn,
+                      marginBottom: "8px"
+                    }}>
+                      Engine couldn't read the application form
+                    </h3>
+                    <p style={{ fontSize: "13px", color: C.tx, lineHeight: 1.6, marginBottom: "12px" }}>
+                      This application's form is likely login-gated (common for Submittable, FilmFreeway, and organization-hosted portals). The engine can research the opportunity's public pages but cannot see behind a login, so no written sections were generated.
+                    </p>
+                    <p style={{ fontSize: "13px", color: C.tx, lineHeight: 1.6, marginBottom: "12px" }}>
+                      <strong>The fix:</strong> open the actual application form in another tab, note the field names and word limits, then paste them in here. The engine will regenerate a tailored draft using your exact fields. This takes about 5 minutes and is 100% accurate — it uses the ground truth instead of guessing.
+                    </p>
+                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>
+                      {app.oppUrl && (
+                        <Btn
+                          variant="secondary"
+                          small
+                          onClick={() => {
+                            const url = (app.oppUrl || "").trim();
+                            if (!url) return;
+                            const fullUrl = url.startsWith("http") ? url : "https://" + url;
+                            window.open(fullUrl, "_blank", "noopener,noreferrer");
+                          }}
+                        >↗ Open opportunity page</Btn>
+                      )}
+                      <Btn
+                        variant="teal"
+                        small
+                        onClick={() => {
+                          const oppIdx = opps.findIndex(o =>
+                            o.name === app.oppName && o.organization === app.oppOrg
+                          );
+                          if (oppIdx === -1) {
+                            alert("Couldn't find this opportunity in your saved list — re-save it in the Discover tab first.");
+                            return;
+                          }
+                          const o = opps[oppIdx];
+                          const k = ((o.name || "").toLowerCase().trim().replace(/\s+/g, " ") +
+                                     "|" +
+                                     (o.organization || "").toLowerCase().trim().replace(/\s+/g, " "));
+                          const existing = fieldLibrary && fieldLibrary[k];
+                          if (existing && existing.fields && existing.fields.length > 0) {
+                            setManualText(serializeFields(existing.fields));
+                          } else if (Array.isArray(c.formFieldsFound) && c.formFieldsFound.length > 0) {
+                            setManualText(serializeFields(c.formFieldsFound));
+                          } else {
+                            setManualText("");
+                          }
+                          setStructureRegenerateAppId(app.id);
+                          setStructureFile(null);
+                          setStructureExtractError(null);
+                          setStructureExtracting(false);
+                          setStructureMdl(oppIdx);
+                        }}
+                      >✎ Paste field list & regenerate</Btn>
+                    </div>
+                    <p style={{ fontSize: "11px", color: C.tm, lineHeight: 1.5, fontStyle: "italic" }}>
+                      Tip: you can paste the field list as plain text (one field per line, word limit in parentheses) or upload a screenshot of the application form and the engine will extract the fields from it.
+                    </p>
+                  </div>
+                </div>
+              </Card>
+            );
+          }
+
+          // Legitimate case: this opportunity genuinely has no written sections (e.g., an equipment
+          // grant or a portfolio-only application). Show the original quiet message.
+          return (
+            <Card style={{
+              marginBottom: "12px",
+              borderColor: C.tm + "30",
+              background: C.bg
+            }}>
+              <p style={{ fontSize: "13px", color: C.tm, textAlign: "center", padding: "20px" }}>
+                No written sections were required for this application. Check the External Materials above for what you need to provide.
+              </p>
+            </Card>
+          );
+        })()}
 
         {sections.map((s, i) => {
           const isEditing = editingKey === s.k;
